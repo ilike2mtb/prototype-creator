@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.openapi.utils import get_openapi
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -29,6 +30,17 @@ app = FastAPI(
 service_key_header = APIKeyHeader(name="X-Service-Key", auto_error=False)
 
 
+class HealthResponse(BaseModel):
+    ok: bool
+
+
+class RootResponse(BaseModel):
+    name: str
+    ok: bool
+    openapi: str
+    docs: str
+
+
 def custom_openapi() -> dict:
     if app.openapi_schema:
         return app.openapi_schema
@@ -38,7 +50,7 @@ def custom_openapi() -> dict:
         description=app.description,
         routes=app.routes,
     )
-    openapi_schema["openapi"] = "3.0.3"
+    openapi_schema["openapi"] = "3.1.0"
     if PUBLIC_BASE_URL:
         openapi_schema["servers"] = [{"url": PUBLIC_BASE_URL}]
     app.openapi_schema = openapi_schema
@@ -80,13 +92,13 @@ async def _figma_get(path: str, params: Optional[dict] = None) -> dict:
         return response.json()
 
 
-@app.get("/health")
-def health() -> dict:
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
     return {"ok": True}
 
 
-@app.get("/")
-def root() -> dict:
+@app.get("/", response_model=RootResponse)
+def root() -> RootResponse:
     return {
         "name": app.title,
         "ok": True,
