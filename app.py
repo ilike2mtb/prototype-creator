@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
+from fastapi.openapi.utils import get_openapi
 
 load_dotenv()
 
@@ -18,10 +19,26 @@ app = FastAPI(
     title="Figma Proxy API",
     version="1.0.0",
     description="Small authenticated API for Custom GPT actions to query Figma.",
-    openapi_version="3.0.3",
 )
 
 service_key_header = APIKeyHeader(name="X-Service-Key", auto_error=False)
+
+
+def custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    openapi_schema["openapi"] = "3.0.3"
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 def _require_service_key(x_service_key: Optional[str]) -> None:
     if not SERVICE_KEY:
