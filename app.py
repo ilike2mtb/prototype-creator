@@ -14,7 +14,11 @@ FIGMA_API_BASE = "https://api.figma.com/v1"
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()
+PUBLIC_BASE_URL = (
+    os.getenv("PUBLIC_BASE_URL")
+    or os.getenv("RENDER_EXTERNAL_URL")
+    or ""
+).strip()
 
 app = FastAPI(
     title="Figma Proxy API",
