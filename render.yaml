@@ -13,3 +13,5 @@ services:
         sync: false
       - key: REQUEST_TIMEOUT_SECONDS
         value: "20"
+      - key: PUBLIC_BASE_URL
+        value: "https://prototype-creator.onrender.com"

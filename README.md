@@ -29,6 +29,7 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
 4. In Render environment variables, set:
    - `FIGMA_TOKEN`
    - `SERVICE_KEY`
+   - `PUBLIC_BASE_URL` (for this app: `https://prototype-creator.onrender.com`)
 5. Deploy. OpenAPI schema URL:
    - `https://<your-render-domain>/openapi.json`
 

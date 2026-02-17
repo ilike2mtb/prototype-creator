@@ -14,6 +14,7 @@ FIGMA_API_BASE = "https://api.figma.com/v1"
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()
 
 app = FastAPI(
     title="Figma Proxy API",
@@ -34,6 +35,8 @@ def custom_openapi() -> dict:
         routes=app.routes,
     )
     openapi_schema["openapi"] = "3.0.3"
+    if PUBLIC_BASE_URL:
+        openapi_schema["servers"] = [{"url": PUBLIC_BASE_URL}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
