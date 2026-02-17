@@ -1,9 +1,13 @@
 import os
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
+
+load_dotenv()
 
 FIGMA_API_BASE = "https://api.figma.com/v1"
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
@@ -14,14 +18,22 @@ app = FastAPI(
     title="Figma Proxy API",
     version="1.0.0",
     description="Small authenticated API for Custom GPT actions to query Figma.",
+    openapi_version="3.0.3",
 )
 
+service_key_header = APIKeyHeader(name="X-Service-Key", auto_error=False)
 
 def _require_service_key(x_service_key: Optional[str]) -> None:
     if not SERVICE_KEY:
         return
     if not x_service_key or x_service_key != SERVICE_KEY:
         raise HTTPException(status_code=401, detail="Invalid service key")
+
+
+def require_service_key(
+    x_service_key: Annotated[Optional[str], Depends(service_key_header)],
+) -> None:
+    _require_service_key(x_service_key)
 
 
 def _require_figma_token() -> None:
@@ -49,12 +61,21 @@ def health() -> dict:
     return {"ok": True}
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "name": app.title,
+        "ok": True,
+        "openapi": "/openapi.json",
+        "docs": "/docs",
+    }
+
+
 @app.get("/figma/files/{file_key}")
 async def get_file(
     file_key: str,
-    x_service_key: Optional[str] = Header(default=None, alias="X-Service-Key"),
+    _: None = Depends(require_service_key),
 ) -> JSONResponse:
-    _require_service_key(x_service_key)
     data = await _figma_get(f"/files/{file_key}")
     return JSONResponse(content=data)
 
@@ -62,11 +83,10 @@ async def get_file(
 @app.get("/figma/files/{file_key}/nodes")
 async def get_file_nodes(
     file_key: str,
+    _: None = Depends(require_service_key),
     ids: str = Query(..., description="Comma-separated node IDs"),
     depth: Optional[int] = Query(default=None, ge=1, le=10),
-    x_service_key: Optional[str] = Header(default=None, alias="X-Service-Key"),
 ) -> JSONResponse:
-    _require_service_key(x_service_key)
     params = {"ids": ids}
     if depth is not None:
         params["depth"] = depth
@@ -77,12 +97,11 @@ async def get_file_nodes(
 @app.get("/figma/files/{file_key}/images")
 async def get_file_images(
     file_key: str,
+    _: None = Depends(require_service_key),
     ids: str = Query(..., description="Comma-separated node IDs"),
     format: str = Query(default="png", pattern="^(jpg|png|svg|pdf)$"),
     scale: float = Query(default=1.0, ge=0.01, le=4.0),
-    x_service_key: Optional[str] = Header(default=None, alias="X-Service-Key"),
 ) -> JSONResponse:
-    _require_service_key(x_service_key)
     params = {"ids": ids, "format": format, "scale": scale}
     data = await _figma_get(f"/images/{file_key}", params=params)
     return JSONResponse(content=data)

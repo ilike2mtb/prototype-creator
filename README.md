@@ -4,6 +4,7 @@
 Small FastAPI service that securely proxies selected Figma API endpoints so your Custom GPT can call them via Actions.
 
 ## Endpoints
+- `GET /`
 - `GET /health`
 - `GET /figma/files/{file_key}`
 - `GET /figma/files/{file_key}/nodes?ids=...&depth=...`
@@ -18,9 +19,8 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
 2. `python3 -m venv .venv && source .venv/bin/activate`
 3. `pip install -r requirements.txt`
 4. `cp .env.example .env` and set real values
-5. `export $(grep -v '^#' .env | xargs)`
-6. `uvicorn app:app --reload --port 8000`
-7. Open docs: `http://localhost:8000/docs`
+5. `uvicorn app:app --reload --port 8000`
+6. Open docs: `http://localhost:8000/docs`
 
 ## Deploy to Render
 1. Push this repo to your private GitHub account (`ilike2mtb`).
@@ -36,6 +36,9 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
 1. In GPT Builder, add an Action.
 2. Use OpenAPI URL:
    - `https://<your-render-domain>/openapi.json`
-3. Authentication for action requests:
+3. Set authentication to **API Key**:
    - Header name: `X-Service-Key`
    - Value: same as your `SERVICE_KEY` in Render.
+4. Save the action and test with:
+   - `GET /health` for connectivity
+   - `GET /figma/files/{file_key}` for an authenticated call
