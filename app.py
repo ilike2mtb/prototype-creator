@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
@@ -97,6 +97,11 @@ def health() -> HealthResponse:
     return {"ok": True}
 
 
+@app.head("/health", include_in_schema=False)
+def health_head() -> Response:
+    return Response(status_code=200)
+
+
 @app.get("/", response_model=RootResponse)
 def root() -> RootResponse:
     return {
@@ -105,6 +110,11 @@ def root() -> RootResponse:
         "openapi": "/openapi.json",
         "docs": "/docs",
     }
+
+
+@app.head("/", include_in_schema=False)
+def root_head() -> Response:
+    return Response(status_code=200)
 
 
 @app.get("/figma/files/{file_key}")
