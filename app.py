@@ -102,6 +102,26 @@ def health_head() -> Response:
     return Response(status_code=200)
 
 
+@app.get("/health/", include_in_schema=False)
+def health_slash() -> HealthResponse:
+    return {"ok": True}
+
+
+@app.head("/health/", include_in_schema=False)
+def health_slash_head() -> Response:
+    return Response(status_code=200)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz() -> HealthResponse:
+    return {"ok": True}
+
+
+@app.head("/healthz", include_in_schema=False)
+def healthz_head() -> Response:
+    return Response(status_code=200)
+
+
 @app.get("/", response_model=RootResponse)
 def root() -> RootResponse:
     return {
