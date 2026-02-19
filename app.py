@@ -1,5 +1,7 @@
 import os
 from typing import Annotated, Optional
+from fastapi import Request
+
 
 import httpx
 from dotenv import load_dotenv
@@ -91,6 +93,17 @@ async def _figma_get(path: str, params: Optional[dict] = None) -> dict:
             raise HTTPException(status_code=502, detail=detail)
         return response.json()
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    print(f"Response status: {response.status_code}")
+    return response
+
+@app.get("/health")
+def health():
+    print("Health endpoint hit")
+    return {"ok": True}
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
