@@ -6,13 +6,15 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
 ## Endpoints
 - `GET /`
 - `GET /health`
+- `GET /sharepoint/dci-architecture-plan`
 - `GET /figma/files/{file_key}`
 - `GET /figma/files/{file_key}/nodes?ids=...&depth=...`
 - `GET /figma/files/{file_key}/images?ids=...&format=png&scale=1`
 
 ## Auth model
-- Calls to `/figma/*` require header: `X-Service-Key: <SERVICE_KEY>` if `SERVICE_KEY` is set.
+- Calls to `/figma/*` and `/sharepoint/*` require header: `X-Service-Key: <SERVICE_KEY>` if `SERVICE_KEY` is set.
 - Figma auth uses `FIGMA_TOKEN` (server-side, never exposed to GPT).
+- SharePoint auth uses Microsoft Graph app credentials (server-side, never exposed to GPT).
 
 ## Local run
 1. `cd /Users/TBURKE/prototype-creator`
@@ -30,6 +32,13 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
    - `FIGMA_TOKEN`
    - `SERVICE_KEY`
    - `PUBLIC_BASE_URL` (for this app: `https://prototype-creator.onrender.com`)
+   - `MS_TENANT_ID`
+   - `MS_CLIENT_ID`
+   - `MS_CLIENT_SECRET`
+   - `SP_SITE_ID`
+   - `SP_DRIVE_ID`
+   - `SP_FILE_PATH` (example: `Shared Documents/DCI Architecture Plan.xlsx`)
+   - `SP_WORKSHEET_NAME` (optional; if empty, first worksheet is used)
 5. Deploy. OpenAPI schema URL:
    - `https://<your-render-domain>/openapi.json`
 
@@ -42,4 +51,5 @@ Small FastAPI service that securely proxies selected Figma API endpoints so your
    - Value: same as your `SERVICE_KEY` in Render.
 4. Save the action and test with:
    - `GET /health` for connectivity
-   - `GET /figma/files/{file_key}` for an authenticated call
+   - `GET /sharepoint/dci-architecture-plan` for dynamic spreadsheet data
+   - `GET /figma/files/{file_key}` for Figma calls
