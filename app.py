@@ -1,4 +1,5 @@
 import os
+import io
 from typing import Annotated, Optional
 from urllib.parse import quote
 
@@ -8,12 +9,14 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader
+from openpyxl import load_workbook
 from pydantic import BaseModel
 
 load_dotenv()
 
 FIGMA_API_BASE = "https://api.figma.com/v1"
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
+GRAPH_BASE_URL = GRAPH_API_BASE
 
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
@@ -106,8 +109,6 @@ def _require_sharepoint_config() -> None:
         missing.append("MS_CLIENT_ID")
     if not MS_CLIENT_SECRET:
         missing.append("MS_CLIENT_SECRET")
-    if not SP_SITE_ID:
-        missing.append("SP_SITE_ID")
     if not SP_DRIVE_ID:
         missing.append("SP_DRIVE_ID")
     if not SP_FILE_PATH:
@@ -292,61 +293,78 @@ async def get_dci_architecture_plan(
 ) -> SharePointSheetResponse:
     _require_sharepoint_config()
 
+    # Build safe path
     path = quote(SP_FILE_PATH.lstrip("/"), safe="/")
-    item_prefix = f"/sites/{SP_SITE_ID}/drives/{SP_DRIVE_ID}/root:/{path}:"
+
+    # Use drive-only resolution (GPT-safe, avoids WAC)
+    file_url = f"{GRAPH_BASE_URL}/drives/{SP_DRIVE_ID}/root:/{path}:/content"
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
         token = await _graph_access_token(client)
 
-        metadata = await _graph_get(
-            client,
-            token,
-            item_prefix,
-            params={"$select": "name,webUrl"},
+        # Download file binary
+        response = await client.get(
+            file_url,
+            headers={"Authorization": f"Bearer {token}"},
         )
 
-        worksheet_id: str
-        worksheet_name: str
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="SharePoint file not found. Verify SP_FILE_PATH.",
+            )
+
+        if response.status_code == 403:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied. Verify Graph API permissions.",
+            )
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"graph_status": exc.response.status_code, "graph_body": exc.response.text},
+            ) from exc
+
+        file_bytes = response.content
+
+    # Parse Excel locally (no WAC, no workbook API)
+    try:
+        workbook = load_workbook(
+            io.BytesIO(file_bytes),
+            data_only=True,
+            read_only=True,
+        )
+
         if SP_WORKSHEET_NAME:
-            worksheet_name_encoded = quote(SP_WORKSHEET_NAME, safe="")
-            worksheet_data = await _graph_get(
-                client,
-                token,
-                f"{item_prefix}/workbook/worksheets/{worksheet_name_encoded}",
-                params={"$select": "id,name"},
-            )
-            worksheet_id = worksheet_data["id"]
-            worksheet_name = worksheet_data.get("name", SP_WORKSHEET_NAME)
-        else:
-            worksheet_list = await _graph_get(
-                client,
-                token,
-                f"{item_prefix}/workbook/worksheets",
-                params={"$top": 1, "$select": "id,name"},
-            )
-            worksheets = worksheet_list.get("value", [])
-            if not worksheets:
+            if SP_WORKSHEET_NAME not in workbook.sheetnames:
                 raise HTTPException(
-                    status_code=502,
-                    detail="No worksheet found in SharePoint workbook",
+                    status_code=400,
+                    detail=f"Worksheet '{SP_WORKSHEET_NAME}' not found.",
                 )
-            worksheet_id = worksheets[0]["id"]
-            worksheet_name = worksheets[0].get("name", "Sheet1")
+            worksheet = workbook[SP_WORKSHEET_NAME]
+        else:
+            worksheet = workbook.active
 
-        used_range = await _graph_get(
-            client,
-            token,
-            f"{item_prefix}/workbook/worksheets/{worksheet_id}/usedRange(valuesOnly=true)",
-            params={"$select": "values"},
-        )
-        values = used_range.get("values", [])
-        headers, rows = _values_to_rows(values)
+        values = list(worksheet.values)
 
-        return {
-            "file_name": metadata.get("name", ""),
-            "file_web_url": metadata.get("webUrl"),
-            "worksheet": worksheet_name,
-            "headers": headers,
-            "total_rows": len(rows),
-            "rows": rows,
-        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to parse Excel file: {str(e)}",
+        ) from e
+
+    headers, rows = _values_to_rows(values)
+
+    return {
+        "file_name": SP_FILE_PATH.split("/")[-1],
+        "file_web_url": None,
+        "worksheet": worksheet.title,
+        "headers": headers,
+        "total_rows": len(rows),
+        "rows": rows,
+    }
