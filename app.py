@@ -155,18 +155,54 @@ async def _graph_access_token(client: httpx.AsyncClient) -> str:
     return token
 
 
-async def _graph_get(
-    client: httpx.AsyncClient, token: str, path: str, params: Optional[dict] = None
+async def _graph_get_json(
+    client: httpx.AsyncClient,
+    token: str,
+    path: str,
+    params: Optional[dict] = None,
 ) -> dict:
     headers = {"Authorization": f"Bearer {token}"}
-    response = await client.get(f"{GRAPH_API_BASE}{path}", headers=headers, params=params)
+
+    response = await client.get(
+        f"{GRAPH_API_BASE}{path}",
+        headers=headers,
+        params=params,
+        follow_redirects=True,
+    )
+
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,
-            detail={"graph_status": response.status_code, "graph_body": response.text},
+            detail={
+                "graph_status": response.status_code,
+                "graph_body": response.text,
+            },
         )
-    return response.json()
 
+    return response.json()
+async def _graph_download_binary(
+    client: httpx.AsyncClient,
+    token: str,
+    path: str,
+) -> bytes:
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.get(
+        f"{GRAPH_API_BASE}{path}",
+        headers=headers,
+        follow_redirects=True,  # REQUIRED for /content
+    )
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "graph_status": response.status_code,
+                "graph_body": response.text,
+            },
+        )
+
+    return response.content
 
 def _normalize_cell(value: object) -> str:
     if value is None:
@@ -293,45 +329,31 @@ async def get_dci_architecture_plan(
 ) -> SharePointSheetResponse:
     _require_sharepoint_config()
 
-    # Build safe path
+    # Build safe relative path
     path = quote(SP_FILE_PATH.lstrip("/"), safe="/")
 
-    # Use drive-only resolution (GPT-safe, avoids WAC)
-    file_url = f"{GRAPH_BASE_URL}/drives/{SP_DRIVE_ID}/root:/{path}:/content"
+    # Use drive-only resolution (no /sites/, no /workbook/)
+    file_path = f"/drives/{SP_DRIVE_ID}/root:/{path}:/content"
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
         token = await _graph_access_token(client)
 
-        # Download file binary
-        response = await client.get(
-            file_url,
-            headers={"Authorization": f"Bearer {token}"},
-            follow_redirects=True,
-        )
-
-        if response.status_code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail="SharePoint file not found. Verify SP_FILE_PATH.",
-            )
-
-        if response.status_code == 403:
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied. Verify Graph API permissions.",
-            )
-
+        # Download Excel file binary
         try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
+            file_bytes = await _graph_download_binary(
+                client,
+                token,
+                file_path,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
             raise HTTPException(
                 status_code=502,
-                detail={"graph_status": exc.response.status_code, "graph_body": exc.response.text},
-            ) from exc
+                detail=f"Failed to download SharePoint file: {str(e)}",
+            )
 
-        file_bytes = response.content
-
-    # Parse Excel locally (no WAC, no workbook API)
+    # Parse Excel locally (GPT-safe, no WAC)
     try:
         workbook = load_workbook(
             io.BytesIO(file_bytes),
@@ -357,13 +379,19 @@ async def get_dci_architecture_plan(
         raise HTTPException(
             status_code=502,
             detail=f"Failed to parse Excel file: {str(e)}",
-        ) from e
+        )
+
+    if not values:
+        raise HTTPException(
+            status_code=502,
+            detail="Spreadsheet contains no data.",
+        )
 
     headers, rows = _values_to_rows(values)
 
     return {
         "file_name": SP_FILE_PATH.split("/")[-1],
-        "file_web_url": None,
+        "file_web_url": None,  # Optional — remove if not needed
         "worksheet": worksheet.title,
         "headers": headers,
         "total_rows": len(rows),
