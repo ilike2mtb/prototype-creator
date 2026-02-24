@@ -306,6 +306,7 @@ async def get_dci_architecture_plan(
         response = await client.get(
             file_url,
             headers={"Authorization": f"Bearer {token}"},
+            follow_redirects=True,
         )
 
         if response.status_code == 404:
