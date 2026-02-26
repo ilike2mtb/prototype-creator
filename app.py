@@ -19,7 +19,7 @@ GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_BASE_URL = GRAPH_API_BASE
 
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
-FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY", "").strip()
+FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY_2", "").strip()
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
