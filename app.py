@@ -20,6 +20,8 @@ GRAPH_BASE_URL = GRAPH_API_BASE
 
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY_2", "").strip()
+FIGMA_NODE_IDS = os.getenv("FIGMA_NODE_IDS", "").strip()
+FIGMA_IMAGE_IDS = os.getenv("FIGMA_IMAGE_IDS", "").strip()
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
@@ -106,6 +108,28 @@ def _get_figma_file_key() -> str:
     if not FIGMA_FILE_KEY:
         raise HTTPException(status_code=500, detail="FIGMA_FILE_KEY is not configured")
     return FIGMA_FILE_KEY
+
+
+def _get_figma_node_ids(ids_override: Optional[str] = None) -> str:
+    if ids_override and ids_override.strip():
+        return ids_override.strip()
+    if not FIGMA_NODE_IDS:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_NODE_IDS is not configured and no ids query parameter was provided",
+        )
+    return FIGMA_NODE_IDS
+
+
+def _get_figma_image_ids(ids_override: Optional[str] = None) -> str:
+    if ids_override and ids_override.strip():
+        return ids_override.strip()
+    if not FIGMA_IMAGE_IDS:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_IMAGE_IDS is not configured and no ids query parameter was provided",
+        )
+    return FIGMA_IMAGE_IDS
 
 
 def _require_sharepoint_config() -> None:
@@ -303,11 +327,14 @@ async def get_file(
 @app.get("/figma/file/nodes")
 async def get_file_nodes(
     _: None = Depends(require_service_key),
-    ids: str = Query(..., description="Comma-separated node IDs"),
+    ids: Optional[str] = Query(
+        default=None,
+        description="Comma-separated node IDs. Optional if FIGMA_NODE_IDS is configured.",
+    ),
     depth: Optional[int] = Query(default=None, ge=1, le=10),
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
-    params = {"ids": ids}
+    params = {"ids": _get_figma_node_ids(ids)}
     if depth is not None:
         params["depth"] = depth
     data = await _figma_get(f"/files/{file_key}/nodes", params=params)
@@ -317,12 +344,15 @@ async def get_file_nodes(
 @app.get("/figma/file/images")
 async def get_file_images(
     _: None = Depends(require_service_key),
-    ids: str = Query(..., description="Comma-separated node IDs"),
+    ids: Optional[str] = Query(
+        default=None,
+        description="Comma-separated node IDs. Optional if FIGMA_IMAGE_IDS is configured.",
+    ),
     format: str = Query(default="png", pattern="^(jpg|png|svg|pdf)$"),
     scale: float = Query(default=1.0, ge=0.01, le=4.0),
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
-    params = {"ids": ids, "format": format, "scale": scale}
+    params = {"ids": _get_figma_image_ids(ids), "format": format, "scale": scale}
     data = await _figma_get(f"/images/{file_key}", params=params)
     return JSONResponse(content=data)
 
