@@ -96,6 +96,9 @@ def _require_service_key(x_service_key: Optional[str]) -> None:
 def require_service_key(
     x_service_key: Annotated[Optional[str], Depends(service_key_header)],
 ) -> None:
+    if(DEBUG := os.getenv("DEBUG", "False").lower() == "true"):
+        print("EXPECTED:", SERVICE_KEY)
+        print("RECEIVED:", x_service_key)
     _require_service_key(x_service_key)
 
 
