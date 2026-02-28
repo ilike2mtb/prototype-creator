@@ -133,8 +133,11 @@ def _get_figma_image_ids(ids_override: Optional[str] = None) -> str:
             status_code=500,
             detail="FIGMA_IMAGE_IDS is not configured and no ids query parameter was provided",
         )
-    return FIGMA_IMAGE_IDS
+    raw = FIGMA_IMAGE_IDS
+    # Normalize dash format (1-88) → colon format (1:88)
+    normalized = ",".join(part.replace("-", ":") for part in raw.split(","))
 
+    return normalized
 
 def _get_figma_depth(depth_override: Optional[int] = None) -> int:
     if depth_override is not None:
