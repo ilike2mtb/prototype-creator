@@ -22,6 +22,7 @@ FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY_2", "").strip()
 FIGMA_NODE_IDS = os.getenv("FIGMA_NODE_IDS", "").strip()
 FIGMA_IMAGE_IDS = os.getenv("FIGMA_IMAGE_IDS", "").strip()
+FIGMA_DEPTH = int(os.getenv("FIGMA_DEPTH", "2"))
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
@@ -133,6 +134,12 @@ def _get_figma_image_ids(ids_override: Optional[str] = None) -> str:
             detail="FIGMA_IMAGE_IDS is not configured and no ids query parameter was provided",
         )
     return FIGMA_IMAGE_IDS
+
+
+def _get_figma_depth(depth_override: Optional[int] = None) -> int:
+    if depth_override is not None:
+        return depth_override
+    return FIGMA_DEPTH
 
 
 def _slim_figma_node(node: dict) -> dict:
@@ -391,8 +398,7 @@ async def get_file_nodes(
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
     params = {"ids": _get_figma_node_ids(ids)}
-    if depth is not None:
-        params["depth"] = depth
+    params["depth"] = _get_figma_depth(depth)
     data = await _figma_get(f"/files/{file_key}/nodes", params=params)
     return JSONResponse(content=_trim_figma_nodes_response(data))
 
