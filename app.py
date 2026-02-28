@@ -135,6 +135,59 @@ def _get_figma_image_ids(ids_override: Optional[str] = None) -> str:
     return FIGMA_IMAGE_IDS
 
 
+def _slim_figma_node(node: dict) -> dict:
+    children = node.get("children")
+    slim_children = []
+    if isinstance(children, list):
+        slim_children = [
+            _slim_figma_node(child) for child in children if isinstance(child, dict)
+        ]
+
+    return {
+        "id": node.get("id"),
+        "name": node.get("name"),
+        "type": node.get("type"),
+        "layoutMode": node.get("layoutMode"),
+        "itemSpacing": node.get("itemSpacing"),
+        "paddingTop": node.get("paddingTop"),
+        "paddingBottom": node.get("paddingBottom"),
+        "paddingLeft": node.get("paddingLeft"),
+        "paddingRight": node.get("paddingRight"),
+        "children": slim_children,
+    }
+
+
+def _trim_figma_file_response(data: dict) -> dict:
+    document = data.get("document")
+    return {
+        "name": data.get("name"),
+        "lastModified": data.get("lastModified"),
+        "version": data.get("version"),
+        "document": _slim_figma_node(document) if isinstance(document, dict) else None,
+    }
+
+
+def _trim_figma_nodes_response(data: dict) -> dict:
+    nodes = data.get("nodes")
+    trimmed_nodes: dict = {}
+
+    if isinstance(nodes, dict):
+        for node_id, node_data in nodes.items():
+            if isinstance(node_data, dict) and isinstance(node_data.get("document"), dict):
+                trimmed_nodes[node_id] = _slim_figma_node(node_data["document"])
+            else:
+                trimmed_nodes[node_id] = node_data
+
+    return {"name": data.get("name"), "nodes": trimmed_nodes}
+
+
+def _trim_figma_images_response(data: dict) -> dict:
+    trimmed = {"images": data.get("images", {})}
+    if "err" in data:
+        trimmed["err"] = data["err"]
+    return trimmed
+
+
 def _require_sharepoint_config() -> None:
     missing = []
     if not MS_TENANT_ID:
@@ -324,7 +377,7 @@ async def get_file(
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
     data = await _figma_get(f"/files/{file_key}")
-    return JSONResponse(content=data)
+    return JSONResponse(content=_trim_figma_file_response(data))
 
 
 @app.get("/figma/file/nodes")
@@ -341,7 +394,7 @@ async def get_file_nodes(
     if depth is not None:
         params["depth"] = depth
     data = await _figma_get(f"/files/{file_key}/nodes", params=params)
-    return JSONResponse(content=data)
+    return JSONResponse(content=_trim_figma_nodes_response(data))
 
 
 @app.get("/figma/file/images")
@@ -357,7 +410,7 @@ async def get_file_images(
     file_key = _get_figma_file_key()
     params = {"ids": _get_figma_image_ids(ids), "format": format, "scale": scale}
     data = await _figma_get(f"/images/{file_key}", params=params)
-    return JSONResponse(content=data)
+    return JSONResponse(content=_trim_figma_images_response(data))
 
 
 @app.get(
