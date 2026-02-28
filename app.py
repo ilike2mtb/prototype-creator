@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader
@@ -437,3 +437,9 @@ async def get_dci_architecture_plan(
         "total_rows": len(rows),
         "rows": rows,
     }
+@app.middleware("http")
+async def log_every_request(request: Request, call_next):
+    print("INCOMING:", request.method, request.url.path)
+    response = await call_next(request)
+    print("STATUS:", response.status_code)
+    return response
