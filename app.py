@@ -25,6 +25,8 @@ FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY_2", "").strip()
 FIGMA_NODE_IDS = os.getenv("FIGMA_NODE_IDS", "").strip()
 FIGMA_IMAGE_IDS = os.getenv("FIGMA_IMAGE_IDS", "").strip()
 FIGMA_DEPTH = int(os.getenv("FIGMA_DEPTH", "2"))
+FIGMA_IMAGE_FORMAT = os.getenv("FIGMA_IMAGE_FORMAT", "png").strip() or "png"
+FIGMA_IMAGE_SCALE = float(os.getenv("FIGMA_IMAGE_SCALE", "1.0"))
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
@@ -142,6 +144,26 @@ def _get_figma_depth(depth_override: Optional[int] = None) -> int:
     if depth_override is not None:
         return depth_override
     return FIGMA_DEPTH
+
+
+def _get_figma_image_format(format_override: Optional[str] = None) -> str:
+    image_format = (format_override or FIGMA_IMAGE_FORMAT).strip()
+    if image_format not in {"jpg", "png", "svg", "pdf"}:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_IMAGE_FORMAT must be one of: jpg, png, svg, pdf",
+        )
+    return image_format
+
+
+def _get_figma_image_scale(scale_override: Optional[float] = None) -> float:
+    image_scale = FIGMA_IMAGE_SCALE if scale_override is None else scale_override
+    if image_scale < 0.01 or image_scale > 4.0:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_IMAGE_SCALE must be between 0.01 and 4.0",
+        )
+    return image_scale
 
 
 def _slim_figma_node(node: dict) -> dict:
@@ -352,7 +374,7 @@ def root() -> RootResponse:
     }
 
 
-@app.get("/figma/file")
+@app.get("/figma/file", include_in_schema=False)
 async def get_file(
     _: None = Depends(require_service_key),
 ) -> JSONResponse:
@@ -384,11 +406,24 @@ async def get_file_images(
         default=None,
         description="Comma-separated node IDs. Optional if FIGMA_IMAGE_IDS is configured.",
     ),
-    format: str = Query(default="png", pattern="^(jpg|png|svg|pdf)$"),
-    scale: float = Query(default=1.0, ge=0.01, le=4.0),
+    format: Optional[str] = Query(
+        default=None,
+        pattern="^(jpg|png|svg|pdf)$",
+        description="Optional override. Uses FIGMA_IMAGE_FORMAT if omitted.",
+    ),
+    scale: Optional[float] = Query(
+        default=None,
+        ge=0.01,
+        le=4.0,
+        description="Optional override. Uses FIGMA_IMAGE_SCALE if omitted.",
+    ),
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
-    params = {"ids": _get_figma_image_ids(ids), "format": format, "scale": scale}
+    params = {
+        "ids": _get_figma_image_ids(ids),
+        "format": _get_figma_image_format(format),
+        "scale": _get_figma_image_scale(scale),
+    }
     data = await _figma_get(f"/images/{file_key}", params=params)
     return JSONResponse(content=_trim_figma_images_response(data))
 
