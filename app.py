@@ -228,6 +228,8 @@ async def _figma_get(path: str, params: Optional[dict] = None) -> dict:
                 "figma_status": response.status_code,
                 "figma_body": response.text,
             }
+            if (DEBUG := os.getenv("DEBUG", "False").lower() == "true"):
+                print("FIGMA ERROR:", detail)
             raise HTTPException(status_code=502, detail=detail)
         return response.json()
 
