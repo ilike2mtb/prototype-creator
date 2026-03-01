@@ -97,9 +97,6 @@ def _require_service_key(x_service_key: Optional[str]) -> None:
 def require_service_key(
     x_service_key: Annotated[Optional[str], Depends(service_key_header)],
 ) -> None:
-    if(DEBUG := os.getenv("DEBUG", "False").lower() == "true"):
-        print("EXPECTED:", SERVICE_KEY)
-        print("RECEIVED:", x_service_key)
     _require_service_key(x_service_key)
 
 
@@ -343,31 +340,6 @@ def health() -> HealthResponse:
     return {"ok": True}
 
 
-@app.head("/health", include_in_schema=False)
-def health_head() -> Response:
-    return Response(status_code=200)
-
-
-@app.get("/health/", include_in_schema=False)
-def health_slash() -> HealthResponse:
-    return {"ok": True}
-
-
-@app.head("/health/", include_in_schema=False)
-def health_slash_head() -> Response:
-    return Response(status_code=200)
-
-
-@app.get("/healthz", include_in_schema=False)
-def healthz() -> HealthResponse:
-    return {"ok": True}
-
-
-@app.head("/healthz", include_in_schema=False)
-def healthz_head() -> Response:
-    return Response(status_code=200)
-
-
 @app.get("/", response_model=RootResponse)
 def root() -> RootResponse:
     return {
@@ -376,11 +348,6 @@ def root() -> RootResponse:
         "openapi": "/openapi.json",
         "docs": "/docs",
     }
-
-
-@app.head("/", include_in_schema=False)
-def root_head() -> Response:
-    return Response(status_code=200)
 
 
 @app.get("/figma/file")
@@ -408,7 +375,7 @@ async def get_file_nodes(
     return JSONResponse(content=_trim_figma_nodes_response(data))
 
 
-@app.get("/figma/file/images")
+@app.get("/figma/file/images", methods=["GET", "POST"])
 async def get_file_images(
     _: None = Depends(require_service_key),
     ids: Optional[str] = Query(
@@ -422,7 +389,6 @@ async def get_file_images(
     params = {"ids": _get_figma_image_ids(ids), "format": format, "scale": scale}
     data = await _figma_get(f"/images/{file_key}", params=params)
     return JSONResponse(content=_trim_figma_images_response(data))
-
 
 @app.get(
     "/sharepoint/dci-architecture-plan",
