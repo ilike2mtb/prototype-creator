@@ -377,7 +377,7 @@ async def get_file_nodes(
     return JSONResponse(content=_trim_figma_nodes_response(data))
 
 
-@app.api_route("/figma/file/images", methods=["GET", "POST"])
+@app.get("/figma/file/images")
 async def get_file_images(
     _: None = Depends(require_service_key),
     ids: Optional[str] = Query(
