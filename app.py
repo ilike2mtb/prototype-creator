@@ -23,8 +23,9 @@ GRAPH_BASE_URL = GRAPH_API_BASE
 FIGMA_TOKEN = os.getenv("FIGMA_TOKEN", "").strip()
 FIGMA_FILE_KEY = os.getenv("FIGMA_FILE_KEY_2", "").strip()
 FIGMA_NODE_IDS = os.getenv("FIGMA_NODE_IDS", "").strip()
-FIGMA_IMAGE_IDS = os.getenv("FIGMA_IMAGE_IDS", "").strip()
 FIGMA_DEPTH = int(os.getenv("FIGMA_DEPTH", "2"))
+FIGMA_IMAGE_FORMAT = os.getenv("FIGMA_IMAGE_FORMAT", "png").strip() or "png"
+FIGMA_IMAGE_SCALE = float(os.getenv("FIGMA_IMAGE_SCALE", "1.0"))
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
@@ -124,24 +125,28 @@ def _get_figma_node_ids(ids_override: Optional[str] = None) -> str:
     return FIGMA_NODE_IDS
 
 
-def _get_figma_image_ids(ids_override: Optional[str] = None) -> str:
-    if ids_override and ids_override.strip():
-        return ids_override.strip()
-    if not FIGMA_IMAGE_IDS:
-        raise HTTPException(
-            status_code=500,
-            detail="FIGMA_IMAGE_IDS is not configured and no ids query parameter was provided",
-        )
-    raw = FIGMA_IMAGE_IDS
-    # Normalize dash format (1-88) → colon format (1:88)
-    normalized = ",".join(part.replace("-", ":") for part in raw.split(","))
-
-    return normalized
-
 def _get_figma_depth(depth_override: Optional[int] = None) -> int:
     if depth_override is not None:
         return depth_override
     return FIGMA_DEPTH
+
+
+def _get_figma_image_format() -> str:
+    if FIGMA_IMAGE_FORMAT not in {"jpg", "png", "svg", "pdf"}:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_IMAGE_FORMAT must be one of: jpg, png, svg, pdf",
+        )
+    return FIGMA_IMAGE_FORMAT
+
+
+def _get_figma_image_scale() -> float:
+    if FIGMA_IMAGE_SCALE < 0.01 or FIGMA_IMAGE_SCALE > 4.0:
+        raise HTTPException(
+            status_code=500,
+            detail="FIGMA_IMAGE_SCALE must be between 0.01 and 4.0",
+        )
+    return FIGMA_IMAGE_SCALE
 
 
 def _slim_figma_node(node: dict) -> dict:
@@ -195,6 +200,41 @@ def _trim_figma_images_response(data: dict) -> dict:
     if "err" in data:
         trimmed["err"] = data["err"]
     return trimmed
+
+
+def _collect_figma_node_ids(node: dict) -> list[str]:
+    ids: list[str] = []
+    node_id = node.get("id")
+    if isinstance(node_id, str) and node_id:
+        ids.append(node_id)
+
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict):
+                ids.extend(_collect_figma_node_ids(child))
+
+    return ids
+
+
+def _extract_image_ids_from_nodes(data: dict) -> str:
+    nodes = data.get("nodes")
+    unique_ids: list[str] = []
+    seen: set[str] = set()
+
+    if isinstance(nodes, dict):
+        for node_data in nodes.values():
+            if not isinstance(node_data, dict):
+                continue
+            document = node_data.get("document")
+            if not isinstance(document, dict):
+                continue
+            for node_id in _collect_figma_node_ids(document):
+                if node_id not in seen:
+                    seen.add(node_id)
+                    unique_ids.append(node_id)
+
+    return ",".join(unique_ids)
 
 
 def _require_sharepoint_config() -> None:
@@ -352,7 +392,7 @@ def root() -> RootResponse:
     }
 
 
-@app.get("/figma/file")
+@app.get("/figma/file", include_in_schema=False)
 async def get_file(
     _: None = Depends(require_service_key),
 ) -> JSONResponse:
@@ -374,23 +414,23 @@ async def get_file_nodes(
     params = {"ids": _get_figma_node_ids(ids)}
     params["depth"] = _get_figma_depth(depth)
     data = await _figma_get(f"/files/{file_key}/nodes", params=params)
-    return JSONResponse(content=_trim_figma_nodes_response(data))
+    trimmed_nodes = _trim_figma_nodes_response(data)
 
+    image_ids = _extract_image_ids_from_nodes(data)
+    images_data = {"images": {}}
+    if image_ids:
+        images_data = await _figma_get(
+            f"/images/{file_key}",
+            params={
+                "ids": image_ids,
+                "format": _get_figma_image_format(),
+                "scale": _get_figma_image_scale(),
+            },
+        )
 
-@app.post("/figma/file/images")
-async def get_file_images(
-    _: None = Depends(require_service_key),
-    ids: Optional[str] = Query(
-        default=None,
-        description="Comma-separated node IDs. Optional if FIGMA_IMAGE_IDS is configured.",
-    ),
-    format: str = Query(default="png", pattern="^(jpg|png|svg|pdf)$"),
-    scale: float = Query(default=1.0, ge=0.01, le=4.0),
-) -> JSONResponse:
-    file_key = _get_figma_file_key()
-    params = {"ids": _get_figma_image_ids(ids), "format": format, "scale": scale}
-    data = await _figma_get(f"/images/{file_key}", params=params)
-    return JSONResponse(content=_trim_figma_images_response(data))
+    combined = trimmed_nodes
+    combined["images"] = _trim_figma_images_response(images_data)["images"]
+    return JSONResponse(content=combined)
 
 @app.get(
     "/sharepoint/dci-architecture-plan",
