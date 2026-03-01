@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
 FIGMA_API_BASE = "https://api.figma.com/v1"
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_BASE_URL = GRAPH_API_BASE
@@ -225,7 +227,7 @@ async def _figma_get(path: str, params: Optional[dict] = None) -> dict:
                 "figma_status": response.status_code,
                 "figma_body": response.text,
             }
-            if (DEBUG := os.getenv("DEBUG", "False").lower() == "true"):
+            if DEBUG:
                 print("FIGMA ERROR:", detail)
             raise HTTPException(status_code=502, detail=detail)
         return response.json()
