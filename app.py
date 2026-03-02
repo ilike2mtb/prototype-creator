@@ -401,21 +401,9 @@ async def get_file_nodes(
 @app.post("/figma/file/images")
 async def get_file_images(
     _: None = Depends(require_service_key),
-    ids: Optional[str] = Query(
-        default=None,
-        description="Comma-separated node IDs. Optional if FIGMA_IMAGE_IDS is configured.",
-    ),
-    format: Optional[str] = Query(
-        default=None,
-        pattern="^(jpg|png|svg|pdf)$",
-        description="Optional override. Uses FIGMA_IMAGE_FORMAT if omitted.",
-    ),
-    scale: Optional[float] = Query(
-        default=None,
-        ge=0.01,
-        le=4.0,
-        description="Optional override. Uses FIGMA_IMAGE_SCALE if omitted.",
-    ),
+    ids: str = Query(default=None, description="Comma-separated node IDs."),
+    format: str = Query(default=None, pattern="^(jpg|png|svg|pdf)$"),
+    scale: float = Query(default=None, ge=0.01, le=4.0),
 ) -> JSONResponse:
     file_key = _get_figma_file_key()
     params = {
