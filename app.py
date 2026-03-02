@@ -386,8 +386,8 @@ async def get_file(
 @app.get("/figma/file/nodes")
 async def get_file_nodes(
     _: None = Depends(require_service_key),
-    ids: str | None = Query(default=None, description="Comma-separated node IDs."),
-    depth: int | None = Query(default=None, ge=1, le=10),
+    ids: str = Query(default=None, description="Comma-separated node IDs."),
+    depth: int = Query(default=None, ge=1, le=10),
 ) -> JSONResponse:
     if DEBUG:
         print("Received get_file_nodes request with ids:", ids, "and depth:", depth)
