@@ -392,6 +392,8 @@ async def get_file_nodes(
     ),
     depth: Optional[int] = Query(default=None, ge=1, le=10),
 ) -> JSONResponse:
+    if DEBUG:
+        print("Received get_file_nodes request with ids:", ids, "and depth:", depth)
     file_key = _get_figma_file_key()
     params = {"ids": _get_figma_node_ids(ids)}
     params["depth"] = _get_figma_depth(depth)
