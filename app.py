@@ -41,6 +41,7 @@ MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "").strip()
 SP_SITE_ID = os.getenv("SP_SITE_ID", "").strip()
 SP_DRIVE_ID = os.getenv("SP_DRIVE_ID", "").strip()
 SP_FILE_PATH = os.getenv("SP_FILE_PATH", "").strip()
+SP_FILE_PATH_EXAMPLE = os.getenv("SP_FILE_PATH_EXAMPLE", "").strip()
 SP_WORKSHEET_NAME = os.getenv("SP_WORKSHEET_NAME", "").strip()
 
 app = FastAPI(
@@ -424,6 +425,83 @@ async def get_dci_architecture_plan(
     _require_sharepoint_config()
 
     # Build safe relative path
+    path = quote(SP_FILE_PATH_EXAMPLE.lstrip("/"), safe="/")
+
+    # Use drive-only resolution (no /sites/, no /workbook/)
+    file_path = f"/drives/{SP_DRIVE_ID}/root:/{path}:/content"
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        token = await _graph_access_token(client)
+
+        # Download Excel file binary
+        try:
+            file_bytes = await _graph_download_binary(
+                client,
+                token,
+                file_path,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to download SharePoint file: {str(e)}",
+            )
+
+    # Parse Excel locally (GPT-safe, no WAC)
+    try:
+        workbook = load_workbook(
+            io.BytesIO(file_bytes),
+            data_only=True,
+            read_only=True,
+        )
+
+        if SP_WORKSHEET_NAME:
+            if SP_WORKSHEET_NAME not in workbook.sheetnames:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Worksheet '{SP_WORKSHEET_NAME}' not found.",
+                )
+            worksheet = workbook[SP_WORKSHEET_NAME]
+        else:
+            worksheet = workbook.active
+
+        values = list(worksheet.values)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to parse Excel file: {str(e)}",
+        )
+
+    if not values:
+        raise HTTPException(
+            status_code=502,
+            detail="Spreadsheet contains no data.",
+        )
+
+    headers, rows = _values_to_rows(values)
+
+    return {
+        "file_name": SP_FILE_PATH.split("/")[-1],
+        "file_web_url": None,  # Optional — remove if not needed
+        "worksheet": worksheet.title,
+        "headers": headers,
+        "total_rows": len(rows),
+        "rows": rows,
+    }
+@app.get(
+    "/sharepoint/architecture-plan-template",
+    response_model=SharePointSheetResponse,
+)
+async def get_architecture_plan_template(
+    _: None = Depends(require_service_key),
+) -> SharePointSheetResponse:
+    _require_sharepoint_config()
+
+    # Build safe relative path
     path = quote(SP_FILE_PATH.lstrip("/"), safe="/")
 
     # Use drive-only resolution (no /sites/, no /workbook/)
@@ -493,7 +571,9 @@ async def get_dci_architecture_plan(
     }
 @app.middleware("http")
 async def log_every_request(request: Request, call_next):
-    print("INCOMING:", request.method, request.url.path)
+    if DEBUG:
+        print("INCOMING:", request.method, request.url.path)
     response = await call_next(request)
-    print("STATUS:", response.status_code)
+    if DEBUG:
+        print("STATUS:", response.status_code)
     return response
