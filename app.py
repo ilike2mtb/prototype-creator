@@ -27,6 +27,7 @@ FIGMA_IMAGE_IDS = os.getenv("FIGMA_IMAGE_IDS", "").strip()
 FIGMA_DEPTH = int(os.getenv("FIGMA_DEPTH", "2"))
 FIGMA_IMAGE_FORMAT = os.getenv("FIGMA_IMAGE_FORMAT", "png").strip() or "png"
 FIGMA_IMAGE_SCALE = float(os.getenv("FIGMA_IMAGE_SCALE", "1.0"))
+FIGMA_IMAGE_BATCH_SIZE = int(os.getenv("FIGMA_IMAGE_BATCH_SIZE", "50"))
 SERVICE_KEY = os.getenv("SERVICE_KEY", "").strip()
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 PUBLIC_BASE_URL = (
@@ -294,6 +295,12 @@ def _extract_frame_ids(frames: list[dict]) -> list[str]:
     return frame_ids
 
 
+def _chunk_list(values: list[str], chunk_size: int) -> list[list[str]]:
+    if chunk_size < 1:
+        chunk_size = 1
+    return [values[i : i + chunk_size] for i in range(0, len(values), chunk_size)]
+
+
 def _require_sharepoint_config() -> None:
     missing = []
     if not MS_TENANT_ID:
@@ -349,32 +356,6 @@ async def _graph_access_token(client: httpx.AsyncClient) -> str:
         raise HTTPException(status_code=502, detail="No Graph access token returned")
     return token
 
-
-async def _graph_get_json(
-    client: httpx.AsyncClient,
-    token: str,
-    path: str,
-    params: Optional[dict] = None,
-) -> dict:
-    headers = {"Authorization": f"Bearer {token}"}
-
-    response = await client.get(
-        f"{GRAPH_API_BASE}{path}",
-        headers=headers,
-        params=params,
-        follow_redirects=True,
-    )
-
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "graph_status": response.status_code,
-                "graph_body": response.text,
-            },
-        )
-
-    return response.json()
 async def _graph_download_binary(
     client: httpx.AsyncClient,
     token: str,
@@ -540,25 +521,39 @@ async def export_frame_images(
     if not frame_ids:
         return JSONResponse(content={"totalFrames": 0, "frames": [], "images": {}})
 
-    images_data = await _figma_get(
-        f"/images/{resolved_file_key}",
-        params={
-            "ids": ",".join(frame_ids),
-            "format": _get_figma_image_format(format),
-            "scale": _get_figma_image_scale(scale),
-        },
-    )
+    image_format = _get_figma_image_format(format)
+    image_scale = _get_figma_image_scale(scale)
+    batches = _chunk_list(frame_ids, FIGMA_IMAGE_BATCH_SIZE)
 
-    trimmed_images = _trim_figma_images_response(images_data)
+    merged_images: dict[str, str] = {}
+    merged_errors: list[str] = []
+    for batch in batches:
+        images_data = await _figma_get(
+            f"/images/{resolved_file_key}",
+            params={
+                "ids": ",".join(batch),
+                "format": image_format,
+                "scale": image_scale,
+            },
+        )
+        trimmed_images = _trim_figma_images_response(images_data)
+        batch_images = trimmed_images.get("images", {})
+        if isinstance(batch_images, dict):
+            merged_images.update(batch_images)
+        if "err" in trimmed_images and trimmed_images["err"]:
+            merged_errors.append(str(trimmed_images["err"]))
+
     response_payload = {
         "totalFrames": len(frame_ids),
         "frameIds": frame_ids,
-        "images": trimmed_images.get("images", {}),
+        "images": merged_images,
+        "batchSize": FIGMA_IMAGE_BATCH_SIZE,
+        "batchCount": len(batches),
     }
     if frames:
         response_payload["frames"] = frames
-    if "err" in trimmed_images:
-        response_payload["err"] = trimmed_images["err"]
+    if merged_errors:
+        response_payload["err"] = " | ".join(merged_errors)
 
     return JSONResponse(content=response_payload)
 
