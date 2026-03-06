@@ -110,7 +110,9 @@ def _require_figma_token() -> None:
         raise HTTPException(status_code=500, detail="FIGMA_TOKEN is not configured")
 
 
-def _get_figma_file_key() -> str:
+def _get_figma_file_key(file_key_override: Optional[str] = None) -> str:
+    if file_key_override and file_key_override.strip():
+        return file_key_override.strip()
     if not FIGMA_FILE_KEY:
         raise HTTPException(status_code=500, detail="FIGMA_FILE_KEY is not configured")
     return FIGMA_FILE_KEY
@@ -378,8 +380,9 @@ def root() -> RootResponse:
 @app.get("/figma/file", include_in_schema=False)
 async def get_file(
     _: None = Depends(require_service_key),
+    file_key: str = Query(default=None, description="Optional Figma file key override."),
 ) -> JSONResponse:
-    file_key = _get_figma_file_key()
+    file_key = _get_figma_file_key(file_key)
     data = await _figma_get(f"/files/{file_key}")
     return JSONResponse(content=_trim_figma_file_response(data))
 
@@ -387,12 +390,13 @@ async def get_file(
 @app.get("/figma/file/nodes")
 async def get_file_nodes(
     _: None = Depends(require_service_key),
+    file_key: str = Query(default=None, description="Optional Figma file key override."),
     ids: str = Query(default=None, description="Comma-separated node IDs."),
     depth: int = Query(default=None, ge=1, le=10),
 ) -> JSONResponse:
     if DEBUG:
         print("Received get_file_nodes request with ids:", ids, "and depth:", depth)
-    file_key = _get_figma_file_key()
+    file_key = _get_figma_file_key(file_key)
     params = {"ids": _get_figma_node_ids(ids)}
     params["depth"] = _get_figma_depth(depth)
     data = await _figma_get(f"/files/{file_key}/nodes", params=params)
@@ -402,11 +406,12 @@ async def get_file_nodes(
 @app.api_route("/figma/file/images", methods=["GET", "POST"])
 async def get_file_images(
     _: None = Depends(require_service_key),
+    file_key: str = Query(default=None, description="Optional Figma file key override."),
     ids: str = Query(default=None, description="Comma-separated node IDs."),
     format: str = Query(default=None, pattern="^(jpg|png|svg|pdf)$"),
     scale: float = Query(default=None, ge=0.01, le=4.0),
 ) -> JSONResponse:
-    file_key = _get_figma_file_key()
+    file_key = _get_figma_file_key(file_key)
     params = {
         "ids": _get_figma_image_ids(ids),
         "format": _get_figma_image_format(format),
