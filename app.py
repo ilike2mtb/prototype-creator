@@ -478,18 +478,34 @@ async def get_file_images(
 async def get_file_frames(
     _: None = Depends(require_service_key),
     file_key: str = Query(default=None, description="Optional Figma file key override."),
+    ids: str = Query(
+        default=None,
+        description="Comma-separated root node IDs used to scope frame discovery.",
+    ),
+    depth: int = Query(default=None, ge=1, le=10),
 ) -> JSONResponse:
     resolved_file_key = _get_figma_file_key(file_key)
-    data = await _figma_get(f"/files/{resolved_file_key}")
+    params = {
+        "ids": _get_figma_node_ids(ids),
+        "depth": _get_figma_depth(depth),
+    }
+    data = await _figma_get(f"/files/{resolved_file_key}/nodes", params=params)
 
-    document = data.get("document")
-    frames = _collect_frame_metadata(document) if isinstance(document, dict) else []
+    frames: list[dict] = []
+    nodes = data.get("nodes")
+    if isinstance(nodes, dict):
+        for node_data in nodes.values():
+            if not isinstance(node_data, dict):
+                continue
+            document = node_data.get("document")
+            if isinstance(document, dict):
+                frames.extend(_collect_frame_metadata(document))
 
     return JSONResponse(
         content={
             "name": data.get("name"),
-            "lastModified": data.get("lastModified"),
-            "version": data.get("version"),
+            "requestedIds": params["ids"],
+            "depth": params["depth"],
             "totalFrames": len(frames),
             "frames": frames,
         }
