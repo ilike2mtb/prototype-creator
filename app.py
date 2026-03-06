@@ -222,6 +222,78 @@ def _trim_figma_images_response(data: dict) -> dict:
     return trimmed
 
 
+def _parse_figma_ids(ids: Optional[str]) -> list[str]:
+    if not ids:
+        return []
+    parsed: list[str] = []
+    for raw_part in ids.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        # Accept either URL style (1-88) or API style (1:88).
+        parsed.append(part.replace("-", ":"))
+    return parsed
+
+
+def _frame_metadata_from_node(node: dict, path: list[str], parent_id: Optional[str]) -> dict:
+    bounds = node.get("absoluteBoundingBox") if isinstance(node, dict) else None
+    return {
+        "id": node.get("id"),
+        "name": node.get("name"),
+        "type": node.get("type"),
+        "path": " / ".join(path),
+        "parentId": parent_id,
+        "childCount": len(node.get("children", []))
+        if isinstance(node.get("children"), list)
+        else 0,
+        "layoutMode": node.get("layoutMode"),
+        "itemSpacing": node.get("itemSpacing"),
+        "paddingTop": node.get("paddingTop"),
+        "paddingBottom": node.get("paddingBottom"),
+        "paddingLeft": node.get("paddingLeft"),
+        "paddingRight": node.get("paddingRight"),
+        "x": bounds.get("x") if isinstance(bounds, dict) else None,
+        "y": bounds.get("y") if isinstance(bounds, dict) else None,
+        "width": bounds.get("width") if isinstance(bounds, dict) else None,
+        "height": bounds.get("height") if isinstance(bounds, dict) else None,
+    }
+
+
+def _collect_frame_metadata(
+    node: dict,
+    path: Optional[list[str]] = None,
+    parent_id: Optional[str] = None,
+) -> list[dict]:
+    if not isinstance(node, dict):
+        return []
+
+    current_path = (path or []) + [node.get("name") or node.get("id") or "Unnamed"]
+    frames: list[dict] = []
+
+    if node.get("type") == "FRAME":
+        frames.append(_frame_metadata_from_node(node, current_path, parent_id))
+
+    children = node.get("children")
+    if isinstance(children, list):
+        node_id = node.get("id") if isinstance(node.get("id"), str) else parent_id
+        for child in children:
+            if isinstance(child, dict):
+                frames.extend(_collect_frame_metadata(child, current_path, node_id))
+
+    return frames
+
+
+def _extract_frame_ids(frames: list[dict]) -> list[str]:
+    frame_ids: list[str] = []
+    seen: set[str] = set()
+    for frame in frames:
+        frame_id = frame.get("id")
+        if isinstance(frame_id, str) and frame_id and frame_id not in seen:
+            seen.add(frame_id)
+            frame_ids.append(frame_id)
+    return frame_ids
+
+
 def _require_sharepoint_config() -> None:
     missing = []
     if not MS_TENANT_ID:
@@ -419,6 +491,77 @@ async def get_file_images(
     }
     data = await _figma_get(f"/images/{file_key}", params=params)
     return JSONResponse(content=_trim_figma_images_response(data))
+
+
+@app.get("/figma/file/frames")
+async def get_file_frames(
+    _: None = Depends(require_service_key),
+    file_key: str = Query(default=None, description="Optional Figma file key override."),
+) -> JSONResponse:
+    resolved_file_key = _get_figma_file_key(file_key)
+    data = await _figma_get(f"/files/{resolved_file_key}")
+
+    document = data.get("document")
+    frames = _collect_frame_metadata(document) if isinstance(document, dict) else []
+
+    return JSONResponse(
+        content={
+            "name": data.get("name"),
+            "lastModified": data.get("lastModified"),
+            "version": data.get("version"),
+            "totalFrames": len(frames),
+            "frames": frames,
+        }
+    )
+
+
+@app.api_route("/figma/file/frames/images", methods=["GET", "POST"])
+async def export_frame_images(
+    _: None = Depends(require_service_key),
+    file_key: str = Query(default=None, description="Optional Figma file key override."),
+    ids: str = Query(
+        default=None,
+        description="Optional comma-separated frame IDs. If omitted, all frames are exported.",
+    ),
+    format: str = Query(default=None, pattern="^(jpg|png|svg|pdf)$"),
+    scale: float = Query(default=None, ge=0.01, le=4.0),
+) -> JSONResponse:
+    resolved_file_key = _get_figma_file_key(file_key)
+    frame_ids = _parse_figma_ids(ids)
+    frames: list[dict] = []
+
+    if not frame_ids:
+        data = await _figma_get(f"/files/{resolved_file_key}")
+        document = data.get("document")
+        if isinstance(document, dict):
+            frames = _collect_frame_metadata(document)
+            frame_ids = _extract_frame_ids(frames)
+
+    if not frame_ids:
+        return JSONResponse(content={"totalFrames": 0, "frames": [], "images": {}})
+
+    images_data = await _figma_get(
+        f"/images/{resolved_file_key}",
+        params={
+            "ids": ",".join(frame_ids),
+            "format": _get_figma_image_format(format),
+            "scale": _get_figma_image_scale(scale),
+        },
+    )
+
+    trimmed_images = _trim_figma_images_response(images_data)
+    response_payload = {
+        "totalFrames": len(frame_ids),
+        "frameIds": frame_ids,
+        "images": trimmed_images.get("images", {}),
+    }
+    if frames:
+        response_payload["frames"] = frames
+    if "err" in trimmed_images:
+        response_payload["err"] = trimmed_images["err"]
+
+    return JSONResponse(content=response_payload)
+
 
 @app.get(
     "/sharepoint/dci-architecture-plan",
