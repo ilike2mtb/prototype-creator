@@ -36,7 +36,7 @@ async def get_file_nodes(
     return JSONResponse(content=data)
 
 
-@router.api_route("/figma/file/images", methods=["GET", "POST"])
+@router.post("/figma/file/images")
 async def get_file_images(
     _: None = Depends(require_service_key),
     file_key: Optional[str] = Query(default=None, description="Optional Figma file key override."),

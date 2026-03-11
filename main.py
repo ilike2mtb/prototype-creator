@@ -4,8 +4,20 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from pydantic import BaseModel
 
 from config import settings
+
+
+class HealthResponse(BaseModel):
+    ok: bool
+
+
+class RootResponse(BaseModel):
+    name: str
+    ok: bool
+    openapi: str
+    docs: str
 from routers.figma import router as figma_router
 from routers.sharepoint import router as sharepoint_router
 from routers.chat import router as chat_router
@@ -56,19 +68,19 @@ app.include_router(sharepoint_router)
 app.include_router(chat_router)   # hidden from OpenAPI schema (include_in_schema=False)
 
 
-@app.get("/health", include_in_schema=False)
-def health() -> dict:
-    return {"ok": True}
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(ok=True)
 
 
-@app.get("/", include_in_schema=False)
-def root() -> dict:
-    return {
-        "name": app.title,
-        "ok": True,
-        "openapi": "/openapi.json",
-        "docs": "/docs",
-    }
+@app.get("/", response_model=RootResponse)
+def root() -> RootResponse:
+    return RootResponse(
+        name=app.title,
+        ok=True,
+        openapi="/openapi.json",
+        docs="/docs",
+    )
 
 
 @app.middleware("http")
