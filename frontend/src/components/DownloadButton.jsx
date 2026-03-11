@@ -8,8 +8,13 @@ export default function DownloadButton({ artifacts }) {
   async function handle() {
     if (!ready || busy) return;
     setBusy(true);
-    await downloadZip(artifacts);
-    setBusy(false);
+    try {
+      await downloadZip(artifacts);
+    } catch (e) {
+      console.error("Download failed:", e);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

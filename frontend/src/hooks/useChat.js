@@ -16,7 +16,7 @@ export function useChat({ framework, outputType, mode, drupalVersion, figmaParam
         messages: next, framework, outputType, mode, drupalVersion, figmaParams,
       });
       setMessages(prev => [...prev, { role: "assistant", content: message }]);
-      if (a) setArtifacts(a);
+      if (a?.length) setArtifacts(a[0]);
     } catch (e) {
       setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
     }
