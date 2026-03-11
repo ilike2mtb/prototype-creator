@@ -1,20 +1,44 @@
 services:
+  # ── Backend API (Python) ───────────────────────────────────────────────────
+  # Serves both the Custom GPT Figma proxy endpoints and the /api/chat endpoint
+  # used by the React frontend.  URL stays: https://prototype-creator.onrender.com
   - type: web
     name: prototype-creator
     env: python
     rootDir: .
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker -w 1 -b 0.0.0.0:$PORT --timeout 120 app:app
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker -w 1 -b 0.0.0.0:$PORT --timeout 120 main:app
     envVars:
-      - key: FIGMA_TOKEN
-        sync: false
+      # ── Service auth & networking ────────────────────────────────────────
       - key: SERVICE_KEY
         sync: false
       - key: REQUEST_TIMEOUT_SECONDS
         value: "20"
       - key: PUBLIC_BASE_URL
         value: "https://prototype-creator.onrender.com"
+      - key: DEBUG
+        sync: false
+
+      # ── Figma API ────────────────────────────────────────────────────────
+      - key: FIGMA_TOKEN
+        sync: false
+      - key: FIGMA_FILE_KEY
+        sync: false
+      - key: FIGMA_FILE_KEY_2
+        sync: false
+      - key: FIGMA_NODE_IDS
+        sync: false
+      - key: FIGMA_IMAGE_IDS
+        sync: false
+      - key: FIGMA_DEPTH
+        sync: false
+      - key: FIGMA_IMAGE_FORMAT
+        sync: false
+      - key: FIGMA_IMAGE_SCALE
+        sync: false
+
+      # ── SharePoint / MS Graph ────────────────────────────────────────────
       - key: MS_TENANT_ID
         sync: false
       - key: MS_CLIENT_ID
@@ -27,5 +51,24 @@ services:
         sync: false
       - key: SP_FILE_PATH
         sync: false
+      - key: SP_FILE_PATH_EXAMPLE
+        sync: false
       - key: SP_WORKSHEET_NAME
         sync: false
+
+      # ── NEW: Anthropic LLM + React frontend CORS ─────────────────────────
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ── Frontend static site (React + Vite) ───────────────────────────────────
+  - type: web
+    name: prototype-creator-ui
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://prototype-creator.onrender.com

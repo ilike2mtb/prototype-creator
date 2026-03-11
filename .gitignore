@@ -1,5 +1,11 @@
+# Python
 .env
 .venv/
 __pycache__/
 *.pyc
 .azure/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
