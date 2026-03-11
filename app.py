@@ -435,6 +435,8 @@ async def get_file(
     _: None = Depends(require_service_key),
     file_key: str = Query(default=None, description="Optional Figma file key override."),
 ) -> JSONResponse:
+    if DEBUG:
+        print("Received get_file_key request: ", file_key)
     file_key = _get_figma_file_key(file_key)
     data = await _figma_get(f"/files/{file_key}")
     return JSONResponse(content=_trim_figma_file_response(data))
