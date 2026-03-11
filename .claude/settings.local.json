@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python3 -m venv .venv)",
       "Bash(.venv/bin/pip install -r requirements.txt -q)",
-      "Bash(env -u ANTHROPIC_API_KEY .venv/bin/python -c \":*)"
+      "Bash(env -u ANTHROPIC_API_KEY .venv/bin/python -c \":*)",
+      "Bash(git push origin main)"
     ]
   }
 }
