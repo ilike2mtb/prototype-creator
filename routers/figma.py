@@ -64,6 +64,36 @@ async def get_file_frames(
     return JSONResponse(content=data)
 
 
+@router.get("/figma/file/variables")
+async def get_file_variables(
+    _: None = Depends(require_service_key),
+    file_key: Optional[str] = Query(default=None, description="Optional Figma file key override."),
+) -> JSONResponse:
+    """Return local variables (design tokens — colors, spacing, type scales) from the Figma file."""
+    data = await figma_service.get_variables(file_key=file_key)
+    return JSONResponse(content=data)
+
+
+@router.get("/figma/file/components")
+async def get_file_components(
+    _: None = Depends(require_service_key),
+    file_key: Optional[str] = Query(default=None, description="Optional Figma file key override."),
+) -> JSONResponse:
+    """Return the component library (names, descriptions, node IDs) from the Figma file."""
+    data = await figma_service.get_components(file_key=file_key)
+    return JSONResponse(content=data)
+
+
+@router.get("/figma/file/styles")
+async def get_file_styles(
+    _: None = Depends(require_service_key),
+    file_key: Optional[str] = Query(default=None, description="Optional Figma file key override."),
+) -> JSONResponse:
+    """Return published styles (color fills, text styles, effects, grids) from the Figma file."""
+    data = await figma_service.get_styles(file_key=file_key)
+    return JSONResponse(content=data)
+
+
 @router.api_route("/figma/file/frames/images", methods=["GET", "POST"])
 async def export_frame_images(
     _: None = Depends(require_service_key),

@@ -327,6 +327,108 @@ async def export_images(
     return result
 
 
+# ── Design context helpers ────────────────────────────────────────────────────
+
+
+def _rgba_to_hex(color: dict) -> str:
+    """Convert a Figma RGBA color dict {r,g,b,a} (0-1 floats) to a CSS hex string."""
+    r = int(color.get("r", 0) * 255)
+    g = int(color.get("g", 0) * 255)
+    b = int(color.get("b", 0) * 255)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _slim_variables_response(data: dict) -> dict:
+    meta        = data.get("meta") or {}
+    collections = meta.get("variableCollections") or {}
+    variables   = meta.get("variables") or {}
+
+    col_names = {cid: (col.get("name") or cid) for cid, col in collections.items()}
+
+    slim: list[dict] = []
+    for var in variables.values():
+        resolved_type = var.get("resolvedType")
+        entry: dict = {
+            "name":       var.get("name"),
+            "type":       resolved_type,
+            "collection": col_names.get(var.get("variableCollectionId") or "", ""),
+        }
+        values_by_mode = var.get("valuesByMode") or {}
+        if resolved_type == "COLOR":
+            col_id       = var.get("variableCollectionId") or ""
+            default_mode = (collections.get(col_id) or {}).get("defaultModeId")
+            color        = (
+                values_by_mode.get(default_mode)
+                if default_mode
+                else next(iter(values_by_mode.values()), None)
+            )
+            if isinstance(color, dict) and "r" in color:
+                entry["hex"] = _rgba_to_hex(color)
+        else:
+            first_value = next(iter(values_by_mode.values()), None)
+            if first_value is not None:
+                entry["value"] = str(first_value)
+        slim.append(entry)
+
+    return {
+        "variableCount": len(slim),
+        "collections":   list(col_names.values()),
+        "variables":     slim,
+    }
+
+
+def _slim_components_response(data: dict) -> dict:
+    components = (data.get("meta") or {}).get("components") or []
+    slim = [
+        {
+            "name":           c.get("name"),
+            "description":    c.get("description") or "",
+            "nodeId":         c.get("nodeId"),
+            "componentSetId": c.get("componentSetId"),
+        }
+        for c in components
+    ]
+    return {"componentCount": len(slim), "components": slim}
+
+
+def _slim_styles_response(data: dict) -> dict:
+    styles = (data.get("meta") or {}).get("styles") or []
+    slim = [
+        {
+            "name":        s.get("name"),
+            "type":        s.get("styleType"),   # FILL | TEXT | EFFECT | GRID
+            "description": s.get("description") or "",
+            "nodeId":      s.get("nodeId"),
+        }
+        for s in styles
+    ]
+    return {"styleCount": len(slim), "styles": slim}
+
+
+# ── Public design-context Figma functions ─────────────────────────────────────
+
+
+async def get_variables(file_key: Optional[str] = None) -> dict:
+    """Get local variables (design tokens — colors, spacing, type scales) from a Figma file."""
+    fk   = _resolve_file_key(file_key)
+    data = await _figma_get(f"/files/{fk}/variables/local")
+    return _slim_variables_response(data)
+
+
+async def get_components(file_key: Optional[str] = None) -> dict:
+    """Get the component library (names, descriptions, node IDs) from a Figma file."""
+    fk   = _resolve_file_key(file_key)
+    data = await _figma_get(f"/files/{fk}/components")
+    return _slim_components_response(data)
+
+
+async def get_styles(file_key: Optional[str] = None) -> dict:
+    """Get published styles (color, text, effect, grid) from a Figma file."""
+    fk   = _resolve_file_key(file_key)
+    data = await _figma_get(f"/files/{fk}/styles")
+    return _slim_styles_response(data)
+
+
 # ── SharePoint / MS Graph functions ──────────────────────────────────────────
 
 

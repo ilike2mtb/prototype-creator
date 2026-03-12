@@ -3,7 +3,8 @@ import httpx as _httpx
 from config import settings
 from services.integrations import (
     get_frames, get_nodes, export_images,
-    get_architecture_plan, get_architecture_template
+    get_variables, get_components, get_styles,
+    get_architecture_plan, get_architecture_template,
 )
 
 log = logging.getLogger("anthropic_service")
@@ -80,6 +81,47 @@ ALL_TOOLS = [
         }
     },
     {
+        "name": "get_figma_variables",
+        "description": (
+            "Get design tokens (colors, spacing, typography scales) defined as local variables "
+            "in the Figma file. Use this to extract the exact color palette and spacing system "
+            "so generated code uses the real design tokens instead of guessed values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_key": {"type": "string", "description": "Figma file key (optional — uses default if omitted)"}
+            }
+        }
+    },
+    {
+        "name": "get_figma_components",
+        "description": (
+            "Get the component library from the Figma file — names, descriptions, and node IDs "
+            "of all reusable components. Use this to understand the design system's component "
+            "vocabulary before generating framework code."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_key": {"type": "string", "description": "Figma file key (optional)"}
+            }
+        }
+    },
+    {
+        "name": "get_figma_styles",
+        "description": (
+            "Get published styles (color fills, text styles, effects, grids) from the Figma file. "
+            "Use this to extract the typographic scale, shadow definitions, and grid system."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_key": {"type": "string", "description": "Figma file key (optional)"}
+            }
+        }
+    },
+    {
         "name": "get_dci_architecture_plan",
         "description": "Fetch the DCI architecture plan from SharePoint.",
         "input_schema": {"type": "object", "properties": {}}
@@ -95,6 +137,9 @@ TOOL_MAP = {
     "get_figma_frames":               lambda i: get_frames(**i),
     "get_figma_nodes":                lambda i: get_nodes(**i),
     "export_frame_images":            lambda i: export_images(**i),
+    "get_figma_variables":            lambda i: get_variables(**i),
+    "get_figma_components":           lambda i: get_components(**i),
+    "get_figma_styles":               lambda i: get_styles(**i),
     "get_dci_architecture_plan":      lambda _: get_architecture_plan(),
     "get_architecture_plan_template": lambda _: get_architecture_template(),
 }
@@ -116,9 +161,14 @@ def _select_tools(mode: str, framework: str, output_type: str) -> list:
         framework in ("drupal10", "drupal11", "claude") and
         output_type in ("framework", "both")
     )
+    FIGMA_TOOLS = {
+        "get_figma_frames", "get_figma_nodes", "export_frame_images",
+        "get_figma_variables", "get_figma_components", "get_figma_styles",
+    }
+    ARCH_TOOLS = {"get_dci_architecture_plan", "get_architecture_plan_template"}
     return [t for t in ALL_TOOLS if
-        (has_figma or t["name"] not in ("get_figma_frames", "get_figma_nodes", "export_frame_images")) and
-        (has_arch  or t["name"] not in ("get_dci_architecture_plan", "get_architecture_plan_template"))
+        (has_figma or t["name"] not in FIGMA_TOOLS) and
+        (has_arch  or t["name"] not in ARCH_TOOLS)
     ]
 
 
@@ -210,7 +260,11 @@ def _plan_system(framework: str, mode: str, drupal_version: str, figma_params: d
         fw_guidance = 'Use Laravel. Set "framework": "laravel" in your plan.'
 
     figma_instruction = (
-        f"Use get_figma_frames and get_figma_nodes to inspect the Figma design before planning.{param_str}"
+        f"Use get_figma_frames and get_figma_nodes to inspect the Figma design before planning. "
+        f"Also call get_figma_variables to extract the design token palette (colors, spacing) "
+        f"and get_figma_components to understand the component library. "
+        f"Use get_figma_styles if you need the published text/color style names. "
+        f"Apply the real design tokens to the 'designTokens' block in your plan.{param_str}"
         if has_figma else "No Figma design available."
     )
     arch_instruction = (
