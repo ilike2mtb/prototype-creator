@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -39,7 +40,26 @@ class Settings(BaseSettings):
     sp_worksheet_name: str = ""
 
     # ── CORS (React frontend) ────────────────────────────────────────────────
+    # Accepts a JSON array OR a comma-separated string, so the Render env var
+    # can be set simply as: https://prototype-creator-ui.onrender.com
+    # Multiple origins: https://a.onrender.com,https://b.onrender.com
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            raw = v.strip()
+            if raw.startswith("["):
+                import json as _json
+                try:
+                    return _json.loads(raw)
+                except Exception:
+                    pass
+            return [o.strip() for o in raw.split(",") if o.strip()]
+        return v
 
     class Config:
         env_file = ".env"

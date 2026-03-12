@@ -18,7 +18,10 @@ export function useChat({ framework, outputType, mode, drupalVersion, figmaParam
       setMessages(prev => [...prev, { role: "assistant", content: message }]);
       if (a?.length) setArtifacts(a[0]);
     } catch (e) {
-      setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e.message}` }]);
+      const msg = e.message === "Failed to fetch"
+        ? "Could not reach the server. The backend may be waking up on Render's free tier — please wait 30 seconds and try again."
+        : `Error: ${e.message}`;
+      setMessages(prev => [...prev, { role: "assistant", content: msg }]);
     }
     setLoading(false);
   }
