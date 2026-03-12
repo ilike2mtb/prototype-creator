@@ -14,7 +14,7 @@ services:
       - key: SERVICE_KEY
         sync: false
       - key: REQUEST_TIMEOUT_SECONDS
-        value: "20"
+        value: "30"
       - key: PUBLIC_BASE_URL
         value: "https://prototype-creator.onrender.com"
       - key: DEBUG

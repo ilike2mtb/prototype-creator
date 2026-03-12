@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # ── Service auth (Custom GPT uses X-Service-Key header) ──────────────────
     service_key: str = ""
-    request_timeout_seconds: float = 20.0
+    request_timeout_seconds: float = 30.0
     public_base_url: str = ""
 
     # ── Figma defaults (reuse existing Render env var names) ─────────────────

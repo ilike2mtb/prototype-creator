@@ -17,9 +17,12 @@ from config import settings
 FIGMA_API_BASE = "https://api.figma.com/v1"
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 
+# Figma renders images on demand — give them extra time.
+FIGMA_IMAGE_TIMEOUT = 60.0
 
-def _timeout() -> httpx.Timeout:
-    return httpx.Timeout(settings.request_timeout_seconds, connect=30.0)
+
+def _timeout(read: Optional[float] = None) -> httpx.Timeout:
+    return httpx.Timeout(read or settings.request_timeout_seconds, connect=30.0)
 
 
 # ── Node / response trimming helpers ─────────────────────────────────────────
@@ -191,13 +194,14 @@ def _resolve_scale(scale_val: Optional[float] = None) -> float:
 # ── Figma API HTTP helper ─────────────────────────────────────────────────────
 
 
-async def _figma_get(path: str, params: Optional[dict] = None) -> dict:
+async def _figma_get(path: str, params: Optional[dict] = None,
+                     read_timeout: Optional[float] = None) -> dict:
     if not settings.figma_token:
         return {"error": "FIGMA_TOKEN is not configured"}
     headers = {"X-Figma-Token": settings.figma_token}
     if settings.debug:
         print("FIGMA GET:", path, params)
-    async with httpx.AsyncClient(timeout=_timeout()) as client:
+    async with httpx.AsyncClient(timeout=_timeout(read_timeout)) as client:
         response = await client.get(
             f"{FIGMA_API_BASE}{path}", headers=headers, params=params or {}
         )
@@ -267,7 +271,8 @@ async def get_file_images(
     nids = _resolve_image_ids(ids)
     fmt = _resolve_format(format)
     scl = _resolve_scale(scale)
-    data = await _figma_get(f"/images/{fk}", {"ids": nids, "format": fmt, "scale": scl})
+    data = await _figma_get(f"/images/{fk}", {"ids": nids, "format": fmt, "scale": scl},
+                            read_timeout=FIGMA_IMAGE_TIMEOUT)
     return _trim_figma_images_response(data)
 
 
@@ -307,6 +312,7 @@ async def export_images(
         images_data = await _figma_get(
             f"/images/{fk}",
             {"ids": ",".join(batch), "format": fmt, "scale": scl},
+            read_timeout=FIGMA_IMAGE_TIMEOUT,
         )
         trimmed = _trim_figma_images_response(images_data)
         batch_images = trimmed.get("images", {})
