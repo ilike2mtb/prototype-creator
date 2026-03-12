@@ -13,6 +13,13 @@ export async function sendMessage({ messages, framework, outputType, mode, drupa
       figma_params:   figmaParams  ?? {},
     }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    let detail = `Server error (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body.detail) detail = body.detail;
+    } catch (_) {}
+    throw new Error(detail);
+  }
   return res.json();
 }
