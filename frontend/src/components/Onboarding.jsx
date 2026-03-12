@@ -170,6 +170,11 @@ export default function Onboarding({ onComplete }) {
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#4a5568" }}>
             Framework: <span style={{ color: "#a5b4fc" }}>{FW_LABEL[framework]}</span>
           </p>
+          {framework === "claude" && (
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#68d391", maxWidth: 360, textAlign: "center" }}>
+              Claude will pick the best framework based on your use case.
+            </p>
+          )}
           <div>
             {[frameworkOutputLabel(), "HTML Prototype", "Both"].map(l => pill(l, pickOutputType))}
           </div>

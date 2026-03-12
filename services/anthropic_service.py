@@ -251,7 +251,8 @@ def _plan_system(framework: str, mode: str, drupal_version: str, figma_params: d
     if framework == "claude":
         fw_guidance = (
             "Choose the best framework (drupal10, drupal11, or laravel) based on the "
-            "user's requirements. Set 'framework' accordingly in your plan."
+            "user's requirements. Set 'framework' accordingly in your plan, and set "
+            "'frameworkRationale' to a concise 1-2 sentence explanation of why you chose it."
         )
     elif framework in ("drupal10", "drupal11"):
         ver = "10" if framework == "drupal10" else "11"
@@ -272,6 +273,11 @@ def _plan_system(framework: str, mode: str, drupal_version: str, figma_params: d
         if has_arch else ""
     )
 
+    rationale_field = (
+        '\n  "frameworkRationale": "1-2 sentence explanation of why this framework was chosen",'
+        if framework == "claude" else ""
+    )
+
     return f"""You are an expert web architect. Analyse the user's requirements and produce a structured project plan.
 
 {fw_guidance}
@@ -287,7 +293,7 @@ Respond with ONLY this JSON block and no other text:
   "projectName": "kebab-case-name",
   "displayName": "Human Readable Name",
   "summary": "2-3 sentence description of what this prototype does",
-  "framework": "drupal11 | drupal10 | laravel",
+  "framework": "drupal11 | drupal10 | laravel",{rationale_field}
   "drupalVersion": "11 | 10 | null",
   "contentTypes": [
     {{"name": "article", "fields": [{{"name": "title", "type": "string"}}, {{"name": "body", "type": "text"}}]}}
@@ -766,5 +772,15 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
 
     file_count = len(all_files)
     display = f"{summary}\n\n✅ Generated {file_count} file{'s' if file_count != 1 else ''}." if all_files else summary
+
+    # When user chose "Claude Chooses", prepend what framework was selected and why.
+    if framework == "claude" and resolved_framework:
+        fw_names = {"drupal10": "Drupal 10", "drupal11": "Drupal 11", "laravel": "Laravel"}
+        fw_name  = fw_names.get(resolved_framework, resolved_framework)
+        rationale = plan.get("frameworkRationale", "")
+        fw_note   = f"Framework selected: {fw_name}."
+        if rationale:
+            fw_note += f" {rationale}"
+        display = f"{fw_note}\n\n{display}"
 
     return display, artifacts
