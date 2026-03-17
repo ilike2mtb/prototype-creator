@@ -49,7 +49,13 @@ def _slim_figma_node(node: dict) -> dict:
     }
 
 
+def _is_figma_error_response(data: dict) -> bool:
+    return "error" in data or "figma_status" in data
+
+
 def _trim_figma_file_response(data: dict) -> dict:
+    if _is_figma_error_response(data):
+        return data
     document = data.get("document")
     return {
         "name": data.get("name"),
@@ -60,6 +66,8 @@ def _trim_figma_file_response(data: dict) -> dict:
 
 
 def _trim_figma_nodes_response(data: dict) -> dict:
+    if _is_figma_error_response(data):
+        return data
     nodes = data.get("nodes")
     trimmed_nodes: dict = {}
     if isinstance(nodes, dict):
@@ -67,11 +75,13 @@ def _trim_figma_nodes_response(data: dict) -> dict:
             if isinstance(node_data, dict) and isinstance(node_data.get("document"), dict):
                 trimmed_nodes[node_id] = _slim_figma_node(node_data["document"])
             else:
-                trimmed_nodes[node_id] = node_data
+                trimmed_nodes[node_id] = None
     return {"name": data.get("name"), "nodes": trimmed_nodes}
 
 
 def _trim_figma_images_response(data: dict) -> dict:
+    if _is_figma_error_response(data):
+        return data
     trimmed = {"images": data.get("images", {})}
     if "err" in data:
         trimmed["err"] = data["err"]
@@ -243,6 +253,8 @@ async def get_frames(
     nids = _resolve_node_ids(ids)
     d = _resolve_depth(depth)
     data = await _figma_get(f"/files/{fk}/nodes", {"ids": nids, "depth": d})
+    if _is_figma_error_response(data):
+        return data
 
     frames: list[dict] = []
     nodes = data.get("nodes")
@@ -418,6 +430,8 @@ async def get_variables(file_key: Optional[str] = None) -> dict:
     """Get local variables (design tokens — colors, spacing, type scales) from a Figma file."""
     fk   = _resolve_file_key(file_key)
     data = await _figma_get(f"/files/{fk}/variables/local")
+    if _is_figma_error_response(data):
+        return data
     return _slim_variables_response(data)
 
 
@@ -425,6 +439,8 @@ async def get_components(file_key: Optional[str] = None) -> dict:
     """Get the component library (names, descriptions, node IDs) from a Figma file."""
     fk   = _resolve_file_key(file_key)
     data = await _figma_get(f"/files/{fk}/components")
+    if _is_figma_error_response(data):
+        return data
     return _slim_components_response(data)
 
 
@@ -432,6 +448,8 @@ async def get_styles(file_key: Optional[str] = None) -> dict:
     """Get published styles (color, text, effect, grid) from a Figma file."""
     fk   = _resolve_file_key(file_key)
     data = await _figma_get(f"/files/{fk}/styles")
+    if _is_figma_error_response(data):
+        return data
     return _slim_styles_response(data)
 
 
