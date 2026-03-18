@@ -50,7 +50,7 @@ def _slim_figma_node(node: dict) -> dict:
 
 
 def _is_figma_error_response(data: dict) -> bool:
-    return "error" in data or "figma_status" in data
+    return bool(data.get("error")) or "figma_status" in data
 
 
 def _trim_figma_file_response(data: dict) -> dict:
