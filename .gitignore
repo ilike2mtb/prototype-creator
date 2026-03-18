@@ -9,3 +9,7 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/.vite/
+
+# Editor
+.vscode/
