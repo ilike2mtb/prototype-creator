@@ -3,6 +3,9 @@
 ## What this is
 Small FastAPI service that securely proxies selected Figma API endpoints so your Custom GPT can call them via Actions.
 
+## VS Code / Cursor workspace layout
+This repo includes workspace settings in [.vscode/settings.json](/Users/TBURKE/projects/prototype-creator/.vscode/settings.json) to support a three-column editing workflow with the center group as the main editing pane. For the setup steps and optional keybinding, see [.vscode/center-editor-workflow.md](/Users/TBURKE/projects/prototype-creator/.vscode/center-editor-workflow.md).
+
 ## Endpoints
 - `GET /`
 - `GET /health`

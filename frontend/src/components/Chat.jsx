@@ -51,7 +51,8 @@ export default function Chat({ framework, outputType, mode, drupalVersion, figma
   function handleSend() { if (!input.trim() || loading) return; send(input.trim()); setInput(""); }
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:"#0f1117", color:"#e2e8f0", fontFamily:"system-ui,sans-serif" }}>
+    <div style={{ display:"flex", justifyContent:"center", alignItems:"center", height:"100vh", background:"#0f1117", color:"#e2e8f0", fontFamily:"system-ui,sans-serif", padding:20 }}>
+      <div style={{ display:"flex", flexDirection:"column", width:"min(100%, 1100px)", height:"calc(100vh - 40px)", maxHeight:900, background:"#0f1117", border:"1px solid #2d3748", borderRadius:14, overflow:"hidden", boxShadow:"0 20px 60px rgba(0,0,0,0.45)" }}>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ padding:"14px 20px", borderBottom:"1px solid #2d3748", background:"#1a1f2e", display:"flex", alignItems:"center", gap:12 }}>
@@ -120,6 +121,7 @@ export default function Chat({ framework, outputType, mode, drupalVersion, figma
       </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}`}</style>
+      </div>
     </div>
   );
 }

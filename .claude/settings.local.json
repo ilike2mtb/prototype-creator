@@ -4,7 +4,12 @@
       "Bash(python3 -m venv .venv)",
       "Bash(.venv/bin/pip install -r requirements.txt -q)",
       "Bash(env -u ANTHROPIC_API_KEY .venv/bin/python -c \":*)",
-      "Bash(git push origin main)"
+      "Bash(git push origin main)",
+      "Bash(git add frontend/src/components/Onboarding.jsx services/anthropic_service.py)",
+      "Bash(use case\" on the output-type step when framework === \"claude\":*)",
+      "Bash(git push)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
