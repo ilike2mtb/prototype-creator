@@ -53,6 +53,13 @@ def _is_figma_error_response(data: dict) -> bool:
     return bool(data.get("error")) or "figma_status" in data
 
 
+def _is_figma_variables_scope_error(data: dict) -> bool:
+    if data.get("figma_status") != 403:
+        return False
+    body = str(data.get("figma_body") or "")
+    return "file_variables:read" in body
+
+
 def _trim_figma_file_response(data: dict) -> dict:
     if _is_figma_error_response(data):
         return data
@@ -284,12 +291,18 @@ async def get_file_summary(file_key: Optional[str] = None) -> dict:
         return styles_data
 
     variables_data = await _figma_get(f"/files/{fk}/variables/local")
-    if _is_figma_error_response(variables_data):
+    variables_unavailable = False
+    variables_error = None
+    variable_count = None
+    if _is_figma_variables_scope_error(variables_data):
+        variables_unavailable = True
+        variables_error = "Figma token lacks file_variables:read scope."
+    elif _is_figma_error_response(variables_data):
         return variables_data
-
     component_count = len(((components_data.get("meta") or {}).get("components") or []))
     style_count = len(((styles_data.get("meta") or {}).get("styles") or []))
-    variable_count = len(((variables_data.get("meta") or {}).get("variables") or {}))
+    if not variables_unavailable:
+        variable_count = len(((variables_data.get("meta") or {}).get("variables") or {}))
 
     return {
         "name": file_data.get("name"),
@@ -303,6 +316,8 @@ async def get_file_summary(file_key: Optional[str] = None) -> dict:
         "componentCount": component_count,
         "styleCount": style_count,
         "variableCount": variable_count,
+        "variablesUnavailable": variables_unavailable,
+        "variablesError": variables_error,
     }
 
 

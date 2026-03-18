@@ -65,7 +65,9 @@ class FigmaFileSummaryResponse(BaseModel):
     totalFrames: int
     componentCount: int
     styleCount: int
-    variableCount: int
+    variableCount: Optional[int] = None
+    variablesUnavailable: bool = False
+    variablesError: Optional[str] = None
 
 
 class FigmaNodesResponse(BaseModel):
