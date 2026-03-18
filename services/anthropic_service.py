@@ -4,6 +4,7 @@ from config import settings
 from services.integrations import (
     get_frames, get_nodes, export_images,
     get_variables, get_components, get_styles,
+    get_file_summary,
     get_architecture_plan, get_architecture_template,
 )
 
@@ -43,6 +44,21 @@ def _resolve_figma_params(user_params: dict) -> dict:
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 ALL_TOOLS = [
+    {
+        "name": "get_figma_summary",
+        "description": (
+            "Get a lightweight overview of the Figma file: file name, page names, "
+            "top-level frame names, and counts of components, styles, and variables. "
+            "Call this FIRST before any other Figma tool to orient yourself — it shows "
+            "what pages and frames exist so you can make targeted follow-up calls."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_key": {"type": "string", "description": "Figma file key (optional — uses default if omitted)"}
+            }
+        }
+    },
     {
         "name": "get_figma_frames",
         "description": "Get all frames in the Figma file to analyse the design.",
@@ -134,6 +150,7 @@ ALL_TOOLS = [
 ]
 
 TOOL_MAP = {
+    "get_figma_summary":              lambda i: get_file_summary(**i),
     "get_figma_frames":               lambda i: get_frames(**i),
     "get_figma_nodes":                lambda i: get_nodes(**i),
     "export_frame_images":            lambda i: export_images(**i),
@@ -162,7 +179,7 @@ def _select_tools(mode: str, framework: str, output_type: str) -> list:
         output_type in ("framework", "both")
     )
     FIGMA_TOOLS = {
-        "get_figma_frames", "get_figma_nodes", "export_frame_images",
+        "get_figma_summary", "get_figma_frames", "get_figma_nodes", "export_frame_images",
         "get_figma_variables", "get_figma_components", "get_figma_styles",
     }
     ARCH_TOOLS = {"get_dci_architecture_plan", "get_architecture_plan_template"}
@@ -261,11 +278,13 @@ def _plan_system(framework: str, mode: str, drupal_version: str, figma_params: d
         fw_guidance = 'Use Laravel. Set "framework": "laravel" in your plan.'
 
     figma_instruction = (
-        f"Use get_figma_frames and get_figma_nodes to inspect the Figma design before planning. "
-        f"Also call get_figma_variables to extract the design token palette (colors, spacing) "
-        f"and get_figma_components to understand the component library. "
-        f"Use get_figma_styles if you need the published text/color style names. "
-        f"Apply the real design tokens to the 'designTokens' block in your plan.{param_str}"
+        f"Call get_figma_summary FIRST to see the file's page names, frame names, and "
+        f"component/style/variable counts. Then call get_figma_variables to extract the "
+        f"design token palette (colors, spacing, typography). Use get_figma_frames or "
+        f"get_figma_nodes only for specific frames identified in the summary. Call "
+        f"get_figma_components or get_figma_styles if their counts are >0. "
+        f"Apply all extracted tokens to the 'designTokens' block — including backgroundColor "
+        f"and textColor when present.{param_str}"
         if has_figma else "No Figma design available."
     )
     arch_instruction = (
@@ -307,6 +326,8 @@ Respond with ONLY this JSON block and no other text:
   "designTokens": {{
     "primaryColor": "#6366f1",
     "secondaryColor": "#8b5cf6",
+    "backgroundColor": "#111827",
+    "textColor": "#f9fafb",
     "fontFamily": "system-ui, sans-serif",
     "borderRadius": "8px"
   }}
@@ -349,7 +370,9 @@ Design tokens: {json.dumps(tokens)}
 Generate these files:
 - THEME_NAME.info.yml (base theme: false, list all regions, attach libraries)
 - THEME_NAME.libraries.yml
-- css/style.css (CSS variables from design tokens, mobile-first responsive)
+- css/style.css — define CSS custom properties from design tokens, then use them throughout:
+  :root {{ --color-primary: {tokens.get('primaryColor','#6366f1')}; --color-secondary: {tokens.get('secondaryColor','#8b5cf6')}; --color-bg: {tokens.get('backgroundColor','#111827')}; --color-text: {tokens.get('textColor','#f9fafb')}; }}
+  body {{ background: var(--color-bg); color: var(--color-text); }}
 - templates/page.html.twig (main layout with {{ page.header }}, {{ page.content }}, {{ page.footer }})
 - templates/node--CONTENT_TYPE.html.twig for each content type
 
@@ -397,7 +420,9 @@ Generate these files:
 - resources/views/layouts/app.blade.php (main layout with navigation)
 - resources/views/welcome.blade.php (home page)
 {chr(10).join(f"- resources/views/{p['name'].lower().replace(' ', '-')}.blade.php" for p in pages)}
-- public/css/style.css (CSS variables, mobile-first, professional design)
+- public/css/style.css — define CSS custom properties then use them:
+  :root {{ --color-primary: {tokens.get('primaryColor','#6366f1')}; --color-secondary: {tokens.get('secondaryColor','#8b5cf6')}; --color-bg: {tokens.get('backgroundColor','#111827')}; --color-text: {tokens.get('textColor','#f9fafb')}; }}
+  body {{ background: var(--color-bg); color: var(--color-text); }}
 
 Format each file EXACTLY like this — no explanatory text, only FILE blocks:
 <FILE path="resources/views/layouts/app.blade.php">
@@ -529,12 +554,12 @@ Write in this order — no deviations:
 6. </FILE>
 
 Simple card template (copy this pattern — do not elaborate):
-<div class="bg-gray-800 rounded-xl overflow-hidden shadow">
-  <div class="h-24 bg-gradient-to-r from-indigo-600 to-violet-600 flex items-center px-4">
+<div class="bg-white/10 rounded-xl overflow-hidden shadow">
+  <div class="h-24 bg-gradient-to-r from-primary to-secondary flex items-center px-4">
     <span class="text-2xl">📄</span>
     <h3 class="ml-3 font-bold text-white">Card Title</h3>
   </div>
-  <div class="p-4 text-gray-400 text-sm">Brief description here.</div>
+  <div class="p-4 text-foreground/70 text-sm">Brief description here.</div>
 </div>
 
 End your output with </FILE>."""
@@ -548,21 +573,31 @@ def _html_prefill(plan: dict) -> str:
     tokens    = plan.get("designTokens", {})
     primary   = tokens.get("primaryColor",   "#6366f1")
     secondary = tokens.get("secondaryColor", "#8b5cf6")
+    bg        = tokens.get("backgroundColor", "")
+    fg        = tokens.get("textColor",       "")
     title     = plan.get("displayName", "Prototype")
 
     # Build a valid JS object literal (no f-string brace collision)
+    bg_token = bg or "#111827"
+    fg_token = fg or "#f9fafb"
     tw_cfg = (
         'tailwind.config={'
         'theme:{extend:{colors:{'
         f'primary:"{primary}",'
-        f'secondary:"{secondary}"'
+        f'secondary:"{secondary}",'
+        f'background:"{bg_token}",'
+        f'foreground:"{fg_token}"'
         '}}}}'
     )
 
-    # NOTE: Anthropic API forbids trailing whitespace in assistant prefill.
-    # End with a non-whitespace token so the model continues inside <body>.
-    # We deliberately omit the bg/text color classes here so that when Figma
-    # images are provided the model can set the correct background from the design.
+    # Apply backgroundColor/textColor directly to <body> so the model cannot
+    # accidentally override them. Falls back to Tailwind defaults if not set.
+    body_classes = "min-h-screen"
+    if bg:
+        body_classes += f" bg-[{bg}]"
+    if fg:
+        body_classes += f" text-[{fg}]"
+
     return (
         f'<FILE path="prototype.html">\n'
         f'<!DOCTYPE html>\n'
@@ -574,7 +609,7 @@ def _html_prefill(plan: dict) -> str:
         f'  <script src="https://cdn.tailwindcss.com"></script>\n'
         f'  <script>{tw_cfg}</script>\n'
         f'</head>\n'
-        f'<body class="min-h-screen">'
+        f'<body class="{body_classes}">'
     )
 
 
@@ -611,6 +646,30 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         plan = json.loads(plan_match.group(1).strip()) if plan_match else {}
     except (json.JSONDecodeError, AttributeError):
         plan = {}
+
+    # Deterministic design token extraction from Figma variables.
+    # Fills backgroundColor/textColor/primaryColor/secondaryColor if Claude left defaults
+    # or the plan was empty — does not overwrite values Claude already extracted.
+    if mode in ("figma", "both") and figma_params:
+        try:
+            vars_data = await get_variables(file_key=figma_params.get("file_key"))
+            tokens = plan.setdefault("designTokens", {})
+            for v in (vars_data.get("variables") or []):
+                n = (v.get("name") or "").lower()
+                h = v.get("hex")
+                if not h:
+                    continue
+                if any(k in n for k in ("background", "bg", "surface", "canvas")):
+                    tokens.setdefault("backgroundColor", h)
+                elif any(k in n for k in ("text", "foreground", "on-", "content")):
+                    tokens.setdefault("textColor", h)
+                elif "primary" in n:
+                    tokens.setdefault("primaryColor", h)
+                elif "secondary" in n:
+                    tokens.setdefault("secondaryColor", h)
+            log.info("Design tokens after extraction: %s", tokens)
+        except Exception as exc:
+            log.warning("Deterministic token extraction failed — %s", exc)
 
     # Resolve framework & Drupal version from plan (handles 'claude' mode)
     resolved_framework  = plan.get("framework", framework if framework != "claude" else "drupal11")
