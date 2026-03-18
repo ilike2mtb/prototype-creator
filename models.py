@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,7 +44,7 @@ class FigmaNode(BaseModel):
     paddingBottom: Optional[float] = None
     paddingLeft: Optional[float] = None
     paddingRight: Optional[float] = None
-    children: list["FigmaNode"] = Field(default_factory=list)
+    children: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FigmaFileResponse(BaseModel):
@@ -136,6 +136,3 @@ class FigmaStyle(BaseModel):
 class FigmaStylesResponse(BaseModel):
     styleCount: int
     styles: list[FigmaStyle] = Field(default_factory=list)
-
-
-FigmaNode.model_rebuild()

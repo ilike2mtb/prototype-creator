@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,11 +35,12 @@ app = FastAPI(
     title="Figma Proxy API",
     version="1.0.0",
     description="Small authenticated API for Custom GPT actions to query Figma.",
+    openapi_version="3.0.3",
 )
 
 
 def custom_openapi() -> dict:
-    """Custom OpenAPI schema: pin to 3.1.0 and inject the canonical server URL."""
+    """Custom OpenAPI schema: emit 3.0.3 and inject the canonical server URL."""
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
@@ -46,12 +48,47 @@ def custom_openapi() -> dict:
         version=app.version,
         description=app.description,
         routes=app.routes,
+        openapi_version=app.openapi_version,
     )
-    openapi_schema["openapi"] = "3.1.0"
+    openapi_schema = _normalize_openapi_for_gpt_actions(openapi_schema)
+    openapi_schema["openapi"] = "3.0.3"
     if PUBLIC_BASE_URL:
         openapi_schema["servers"] = [{"url": PUBLIC_BASE_URL}]
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
+
+def _normalize_openapi_for_gpt_actions(value: Any) -> Any:
+    """Down-convert nullable 3.1 schema fragments to a 3.0.3-friendly shape."""
+    if isinstance(value, list):
+        return [_normalize_openapi_for_gpt_actions(item) for item in value]
+
+    if not isinstance(value, dict):
+        return value
+
+    normalized = {
+        key: _normalize_openapi_for_gpt_actions(item)
+        for key, item in value.items()
+    }
+
+    any_of = normalized.get("anyOf")
+    if isinstance(any_of, list):
+        non_null_options = []
+        has_null_option = False
+        for option in any_of:
+            if isinstance(option, dict) and option.get("type") == "null":
+                has_null_option = True
+            else:
+                non_null_options.append(option)
+        if has_null_option and len(non_null_options) == 1 and isinstance(non_null_options[0], dict):
+            merged = dict(non_null_options[0])
+            for key, item in normalized.items():
+                if key != "anyOf" and key not in merged:
+                    merged[key] = item
+            merged["nullable"] = True
+            return merged
+
+    return normalized
 
 
 app.openapi = custom_openapi
