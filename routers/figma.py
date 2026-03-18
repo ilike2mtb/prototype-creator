@@ -56,6 +56,7 @@ def _raise_for_figma_error(data: dict) -> None:
 
 @router.get(
     "/figma/file",
+    include_in_schema=False,
     response_model=FigmaFileResponse,
     responses=FIGMA_ERROR_RESPONSES,
     summary="Get Figma file",
