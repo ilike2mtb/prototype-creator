@@ -88,6 +88,35 @@ def _trim_figma_images_response(data: dict) -> dict:
     return trimmed
 
 
+def _collect_page_names(document: dict) -> list[str]:
+    children = document.get("children")
+    if not isinstance(children, list):
+        return []
+    return [
+        child.get("name") or child.get("id") or "Unnamed"
+        for child in children
+        if isinstance(child, dict)
+    ]
+
+
+def _collect_top_level_frame_names(document: dict) -> list[str]:
+    children = document.get("children")
+    if not isinstance(children, list):
+        return []
+
+    frame_names: list[str] = []
+    for page in children:
+        if not isinstance(page, dict):
+            continue
+        page_children = page.get("children")
+        if not isinstance(page_children, list):
+            continue
+        for node in page_children:
+            if isinstance(node, dict) and node.get("type") == "FRAME":
+                frame_names.append(node.get("name") or node.get("id") or "Unnamed")
+    return frame_names
+
+
 # ── Frame metadata helpers ────────────────────────────────────────────────────
 
 
@@ -230,6 +259,51 @@ async def get_file(file_key: Optional[str] = None) -> dict:
     fk = _resolve_file_key(file_key)
     data = await _figma_get(f"/files/{fk}")
     return _trim_figma_file_response(data)
+
+
+async def get_file_summary(file_key: Optional[str] = None) -> dict:
+    fk = _resolve_file_key(file_key)
+
+    file_data = await _figma_get(f"/files/{fk}")
+    if _is_figma_error_response(file_data):
+        return file_data
+
+    document = file_data.get("document")
+    page_names = _collect_page_names(document) if isinstance(document, dict) else []
+    top_level_frame_names = (
+        _collect_top_level_frame_names(document) if isinstance(document, dict) else []
+    )
+    all_frames = _collect_frame_metadata(document) if isinstance(document, dict) else []
+
+    components_data = await _figma_get(f"/files/{fk}/components")
+    if _is_figma_error_response(components_data):
+        return components_data
+
+    styles_data = await _figma_get(f"/files/{fk}/styles")
+    if _is_figma_error_response(styles_data):
+        return styles_data
+
+    variables_data = await _figma_get(f"/files/{fk}/variables/local")
+    if _is_figma_error_response(variables_data):
+        return variables_data
+
+    component_count = len(((components_data.get("meta") or {}).get("components") or []))
+    style_count = len(((styles_data.get("meta") or {}).get("styles") or []))
+    variable_count = len(((variables_data.get("meta") or {}).get("variables") or {}))
+
+    return {
+        "name": file_data.get("name"),
+        "lastModified": file_data.get("lastModified"),
+        "version": file_data.get("version"),
+        "pageNames": page_names,
+        "topLevelFrameNames": top_level_frame_names,
+        "totalPages": len(page_names),
+        "totalTopLevelFrames": len(top_level_frame_names),
+        "totalFrames": len(all_frames),
+        "componentCount": component_count,
+        "styleCount": style_count,
+        "variableCount": variable_count,
+    }
 
 
 async def get_nodes(

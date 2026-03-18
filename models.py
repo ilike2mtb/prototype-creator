@@ -54,6 +54,20 @@ class FigmaFileResponse(BaseModel):
     document: Optional[FigmaNode] = None
 
 
+class FigmaFileSummaryResponse(BaseModel):
+    name: Optional[str] = None
+    lastModified: Optional[str] = None
+    version: Optional[str] = None
+    pageNames: list[str] = Field(default_factory=list)
+    topLevelFrameNames: list[str] = Field(default_factory=list)
+    totalPages: int
+    totalTopLevelFrames: int
+    totalFrames: int
+    componentCount: int
+    styleCount: int
+    variableCount: int
+
+
 class FigmaNodesResponse(BaseModel):
     name: Optional[str] = None
     nodes: dict[str, Optional[FigmaNode]] = Field(default_factory=dict)

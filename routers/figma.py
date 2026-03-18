@@ -12,6 +12,7 @@ from models import (
     FigmaComponentsResponse,
     FigmaExportedImagesResponse,
     FigmaFileResponse,
+    FigmaFileSummaryResponse,
     FigmaFramesResponse,
     FigmaImagesResponse,
     FigmaNodesResponse,
@@ -75,6 +76,26 @@ async def get_file(
     data = await figma_service.get_file(file_key)
     _raise_for_figma_error(data)
     return FigmaFileResponse.model_validate(data)
+
+
+@router.get(
+    "/figma/file/summary",
+    response_model=FigmaFileSummaryResponse,
+    responses=FIGMA_ERROR_RESPONSES,
+    summary="Get file summary",
+    description="Return compact metadata and design-system counts for a Figma file.",
+)
+async def get_file_summary(
+    _: None = Depends(require_service_key),
+    file_key: Optional[str] = Query(
+        default=None,
+        description="Optional Figma file key override.",
+        examples=["AbCdEfGhIjKlMn"],
+    ),
+) -> FigmaFileSummaryResponse:
+    data = await figma_service.get_file_summary(file_key)
+    _raise_for_figma_error(data)
+    return FigmaFileSummaryResponse.model_validate(data)
 
 
 @router.get(
