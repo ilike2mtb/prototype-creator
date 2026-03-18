@@ -35,12 +35,12 @@ app = FastAPI(
     title="Figma Proxy API",
     version="1.0.0",
     description="Small authenticated API for Custom GPT actions to query Figma.",
-    openapi_version="3.0.3",
+    openapi_version="3.1.0",
 )
 
 
 def custom_openapi() -> dict:
-    """Custom OpenAPI schema: emit 3.0.3 and inject the canonical server URL."""
+    """Custom OpenAPI schema: emit 3.1.0 and inject the canonical server URL."""
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
@@ -51,7 +51,7 @@ def custom_openapi() -> dict:
         openapi_version=app.openapi_version,
     )
     openapi_schema = _normalize_openapi_for_gpt_actions(openapi_schema)
-    openapi_schema["openapi"] = "3.0.3"
+    openapi_schema["openapi"] = "3.1.0"
     if PUBLIC_BASE_URL:
         openapi_schema["servers"] = [{"url": PUBLIC_BASE_URL}]
     app.openapi_schema = openapi_schema
@@ -59,7 +59,7 @@ def custom_openapi() -> dict:
 
 
 def _normalize_openapi_for_gpt_actions(value: Any) -> Any:
-    """Down-convert nullable 3.1 schema fragments to a 3.0.3-friendly shape."""
+    """Normalize nullable schema fragments into a GPT-friendlier OpenAPI shape."""
     if isinstance(value, list):
         return [_normalize_openapi_for_gpt_actions(item) for item in value]
 
