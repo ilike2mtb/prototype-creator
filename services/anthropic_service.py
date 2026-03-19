@@ -337,17 +337,22 @@ Respond with ONLY this JSON block and no other text:
 
 def _drupal_backend_system(plan: dict, drupal_version: str) -> str:
     ver = drupal_version or "11"
+    content_types = plan.get("contentTypes", [])
+    ct_examples = " | ".join(ct["name"].lower().replace(" ", "_") for ct in content_types[:3]) or "article"
     return f"""You are an expert Drupal {ver} developer. Generate backend module files for this project.
 
 Project plan:
 {json.dumps(plan, indent=2)}
 
-Generate these files:
-- MODULE_NAME.info.yml
-- config/install/node.type.CONTENT_TYPE.yml for each content type
-- config/install/field.storage.node.*.yml for custom fields
-- config/install/views.view.*.yml for listing views (keep views config concise)
-- MODULE_NAME.module (only if custom hooks are genuinely needed)
+Generate ALL of these files — every one is required:
+1. MODULE_NAME.info.yml
+2. MODULE_NAME.module — ALWAYS generate this. Include hook_help(), hook_theme() registrations,
+   and hook_preprocess_node() to pass useful variables to templates.
+3. config/install/node.type.CONTENT_TYPE.yml — one per content type ({ct_examples})
+4. config/install/field.storage.node.FIELD_NAME.yml — one per custom field
+5. config/install/field.field.node.CONTENT_TYPE.FIELD_NAME.yml — one per field instance
+   (field.field differs from field.storage: it is the per-bundle attachment config)
+6. config/install/views.view.CONTENT_TYPE_list.yml — one listing view (keep concise)
 
 Format each file EXACTLY like this — no explanatory text, only FILE blocks:
 <FILE path="web/modules/custom/MODULE_NAME/MODULE_NAME.info.yml">
@@ -360,28 +365,97 @@ Keep Drupal {ver} config schema. Omit boilerplate comments. Use realistic machin
 def _drupal_theme_system(plan: dict, drupal_version: str) -> str:
     ver = drupal_version or "11"
     tokens = plan.get("designTokens", {})
-    return f"""You are an expert Drupal {ver} theme developer. Generate theme files for this project.
+    return f"""You are an expert Drupal {ver} theme developer. Generate theme static asset files for this project.
 
 Project plan:
 {json.dumps(plan, indent=2)}
 
 Design tokens: {json.dumps(tokens)}
 
-Generate these files:
-- THEME_NAME.info.yml (base theme: false, list all regions, attach libraries)
-- THEME_NAME.libraries.yml
-- css/style.css — define CSS custom properties from design tokens, then use them throughout:
-  :root {{ --color-primary: {tokens.get('primaryColor','#6366f1')}; --color-secondary: {tokens.get('secondaryColor','#8b5cf6')}; --color-bg: {tokens.get('backgroundColor','#111827')}; --color-text: {tokens.get('textColor','#f9fafb')}; }}
-  body {{ background: var(--color-bg); color: var(--color-text); }}
-- templates/page.html.twig (main layout with {{ page.header }}, {{ page.content }}, {{ page.footer }})
-- templates/node--CONTENT_TYPE.html.twig for each content type
+Generate ONLY these three files (Twig templates will be generated separately):
+1. THEME_NAME.info.yml — base theme: false, list all regions (header, primary_menu, breadcrumb,
+   highlighted, help, content, sidebar_first, sidebar_second, footer), attach libraries
+2. THEME_NAME.libraries.yml — define global-styling and interactive-components libraries
+3. css/style.css — comprehensive stylesheet using CSS custom properties from design tokens:
+   :root {{
+     --color-primary: {tokens.get('primaryColor','#6366f1')};
+     --color-secondary: {tokens.get('secondaryColor','#8b5cf6')};
+     --color-bg: {tokens.get('backgroundColor','#111827')};
+     --color-text: {tokens.get('textColor','#f9fafb')};
+     --radius: {tokens.get('borderRadius','8px')};
+     --font: {tokens.get('fontFamily','system-ui, sans-serif')};
+   }}
+   body {{ background: var(--color-bg); color: var(--color-text); font-family: var(--font); }}
+   Include styles for: nav, cards, forms, buttons, layout containers, and responsive breakpoints.
 
 Format each file EXACTLY like this — no explanatory text, only FILE blocks:
 <FILE path="web/themes/custom/THEME_NAME/THEME_NAME.info.yml">
 file content here
 </FILE>
 
-Use realistic names derived from the project plan. Make the CSS professional and responsive."""
+Use realistic names derived from the project plan. Make the CSS thorough and professional."""
+
+
+def _drupal_twig_system(plan: dict, drupal_version: str) -> str:
+    ver = drupal_version or "11"
+    tokens = plan.get("designTokens", {})
+    content_types = plan.get("contentTypes", [])
+    primary  = tokens.get("primaryColor",   "#6366f1")
+    bg       = tokens.get("backgroundColor","#111827")
+    fg       = tokens.get("textColor",      "#f9fafb")
+    project  = plan.get("displayName", "Site")
+
+    ct_twig_list = "\n".join(
+        f"- templates/node/node--{ct['name'].lower().replace(' ', '_')}.html.twig"
+        for ct in content_types
+    )
+
+    fields_hint = ""
+    for ct in content_types[:2]:   # hint on first 2 types to keep prompt tight
+        field_names = [f["name"] for f in ct.get("fields", [])[:4]]
+        if field_names:
+            fields_hint += f"\n  {ct['name']} fields: {', '.join(field_names)}"
+
+    return f"""You are an expert Drupal {ver} Twig developer. Generate complete, working Twig templates.
+
+Project plan:
+{json.dumps(plan, indent=2)}
+
+Generate ALL of these template files:
+1. templates/layout/page.html.twig — full page layout
+2. templates/layout/page--front.html.twig — homepage variant (hero section + intro)
+{ct_twig_list}
+
+Design tokens for inline styles / CSS class hints:
+  Primary: {primary} | Background: {bg} | Text: {fg}
+{fields_hint}
+
+Rules for page.html.twig:
+- Include {{ page.header }}, {{ page.primary_menu }}, {{ page.content }}, {{ page.footer }} regions
+- Wrap in <div class="layout-container"> with a <main role="main"> content area
+- Add a sticky <header> with site name "{project}" and nav region
+
+Rules for node--TYPE.html.twig:
+- Use {{{{ attributes }}}} on <article>
+- Render title with {{{{ title_prefix }}}}, <h2>{{{{ label }}}}</h2>, {{{{ title_suffix }}}}
+- Render body/fields via {{{{ content }}}} but ALSO explicitly render key fields:
+  e.g. {{% if content.field_featured_image %}}{{{{ content.field_featured_image }}}}...
+- Add teaser vs full-page conditional: {{% if view_mode == 'teaser' %}}
+- Use BEM class names matching the content type machine name
+
+Format each file EXACTLY like this — no explanatory text, only FILE blocks:
+<FILE path="web/themes/custom/THEME_NAME/templates/layout/page.html.twig">
+{{#
+/**
+ * @file
+ * Theme override for the page template.
+ */
+#}}
+file content here
+</FILE>
+
+Replace THEME_NAME with the actual theme machine name from the project plan.
+Write complete, real Twig — not stubs. Every template must be fully functional."""
 
 
 def _laravel_backend_system(plan: dict) -> str:
@@ -695,8 +769,8 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
             all_files.extend(_parse_files(backend_text))
             log.info("Phase 2 done — %d backend files", len(all_files))
 
-            # Phase 3: Drupal theme
-            log.info("Phase 3: Drupal theme (waiting %ds)…", PHASE_DELAY)
+            # Phase 3: Drupal theme static assets (info, libraries, CSS)
+            log.info("Phase 3: Drupal theme static assets (waiting %ds)…", PHASE_DELAY)
             await asyncio.sleep(PHASE_DELAY)
             theme_text, _ = await _call(
                 system=_drupal_theme_system(plan, resolved_drupal_ver),
@@ -704,6 +778,18 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
             )
             all_files.extend(_parse_files(theme_text))
             log.info("Phase 3 done — %d total files so far", len(all_files))
+
+            # Phase 3b: Drupal Twig templates (separate call — ensures token budget)
+            log.info("Phase 3b: Drupal Twig templates (waiting %ds)…", PHASE_DELAY)
+            await asyncio.sleep(PHASE_DELAY)
+            twig_text, _ = await _call(
+                system=_drupal_twig_system(plan, resolved_drupal_ver),
+                messages=generation_msg,
+                max_tokens=MAX_TOKENS,
+            )
+            twig_files = _parse_files(twig_text)
+            all_files.extend(twig_files)
+            log.info("Phase 3b done — %d Twig file(s), %d total", len(twig_files), len(all_files))
 
         else:
             # Phase 2: Laravel backend
@@ -830,7 +916,24 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
     } if all_files else None
 
     file_count = len(all_files)
-    display = f"{summary}\n\n✅ Generated {file_count} file{'s' if file_count != 1 else ''}." if all_files else summary
+    if all_files:
+        # Build a breakdown by file type for a more informative message
+        twig_count   = sum(1 for f in all_files if f["path"].endswith(".twig"))
+        php_count    = sum(1 for f in all_files if f["path"].endswith(".php") or f["path"].endswith(".module"))
+        yml_count    = sum(1 for f in all_files if f["path"].endswith(".yml"))
+        css_count    = sum(1 for f in all_files if f["path"].endswith(".css"))
+        html_count   = sum(1 for f in all_files if f["path"].endswith(".html"))
+        breakdown    = ", ".join(filter(None, [
+            f"{yml_count} YML config{'s' if yml_count != 1 else ''}" if yml_count else None,
+            f"{twig_count} Twig template{'s' if twig_count != 1 else ''}" if twig_count else None,
+            f"{php_count} PHP file{'s' if php_count != 1 else ''}"       if php_count else None,
+            f"{css_count} CSS file{'s' if css_count != 1 else ''}"       if css_count else None,
+            f"{html_count} HTML prototype{'s' if html_count != 1 else ''}" if html_count else None,
+        ]))
+        detail = f" ({breakdown})" if breakdown else ""
+        display = f"{summary}\n\n✅ Generated {file_count} file{'s' if file_count != 1 else ''}{detail}."
+    else:
+        display = summary
 
     # When user chose "Claude Chooses", prepend what framework was selected and why.
     if framework == "claude" and resolved_framework:
