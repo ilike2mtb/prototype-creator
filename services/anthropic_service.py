@@ -795,19 +795,29 @@ def _html_system(plan: dict, has_figma_content: bool = False,
         "- Do NOT default to dark bg-gray-950 — use the actual Figma background color."
     ) if has_figma_images else ""
 
-    # Tell Claude to embed the actual Figma frame images as <img> tags
+    # Tell Claude to embed the actual Figma frame images prominently at the TOP of sections
     figma_embed_note = ""
     if figma_image_urls:
-        url_lines = "\n".join(
-            f"  Frame {i + 1}: {url}"
-            for i, url in enumerate(list(figma_image_urls.values())[:3])
-        )
+        url_list = list(figma_image_urls.values())[:3]
+        url_lines = "\n".join(f"  Frame {i + 1}: {url}" for i, url in enumerate(url_list))
+        first_url = url_list[0] if url_list else ""
+        rest_urls = url_list[1:]
+        rest_note = ""
+        if rest_urls:
+            rest_note = (
+                "  For pages 2+, place their image as a full-width hero BELOW the page heading "
+                "but ABOVE the content cards (h-72 or h-96, object-cover, rounded-2xl).\n"
+                "  Remaining URLs: " + " | ".join(rest_urls)
+            )
         figma_embed_note = (
-            f"\n🖼️ FIGMA FRAME IMAGES — embed these as real <img> tags in the prototype.\n"
-            f"  Use them for: hero section background, card thumbnails, or a 'Design Reference' section.\n"
-            f"  Example: <img src=\"URL\" class=\"w-full h-48 object-cover rounded-xl\" alt=\"Figma design\">\n"
-            f"  Available Figma frame URLs:\n{url_lines}\n"
-            f"  Place at least one <img> tag using these URLs — do NOT use placeholder src values."
+            f"\n🖼️ FIGMA FRAME IMAGES — use these as PROMINENT HERO IMAGES, not decorative footers.\n"
+            f"  RULE: Every <img> must appear near the TOP of its section, not at the bottom.\n"
+            f"  For page 0 (homepage): place this image as the FIRST thing inside the section,\n"
+            f"  before any headings or cards. Use class='w-full h-96 object-cover rounded-2xl shadow-xl mb-8'\n"
+            f"  Homepage hero URL: {first_url}\n"
+            f"{rest_note}\n"
+            f"  All available URLs:\n{url_lines}\n"
+            f"  Do NOT use placeholder src values — only use the URLs listed above."
         )
 
     return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is pre-written. \
@@ -869,6 +879,18 @@ def _html_prefill(plan: dict) -> str:
     bg_token   = bg or "#111827"
     fg_token   = fg or "#f9fafb"
     first_font = font.split(",")[0].strip().strip("'\"")
+
+    # Google Fonts: load the font if it's a named web font (not a system font)
+    _system_fonts = {"system-ui", "ui-sans-serif", "sans-serif", "serif",
+                     "monospace", "ui-serif", "ui-monospace", "cursive", "fantasy"}
+    is_web_font = first_font.lower() not in _system_fonts
+
+    # Build Tailwind fontFamily — only include the named font if it's a real web font
+    if is_web_font:
+        font_sans = f"['{first_font}','system-ui','sans-serif']"
+    else:
+        font_sans = "['system-ui','sans-serif']"
+
     tw_cfg = (
         'tailwind.config={'
         'theme:{extend:{'
@@ -878,17 +900,12 @@ def _html_prefill(plan: dict) -> str:
         f'background:"{bg_token}",'
         f'foreground:"{fg_token}"'
         '},'
-        'fontFamily:{'
-        f"sans:['{first_font}','system-ui','sans-serif']"
-        '}'
+        f'fontFamily:{{sans:{font_sans}}}'
         '}}}'
     )
 
-    # Google Fonts: load the font if it's a named web font (not a system font)
-    _system_fonts = {"system-ui", "ui-sans-serif", "sans-serif", "serif",
-                     "monospace", "ui-serif", "ui-monospace", "cursive", "fantasy"}
     font_link = ""
-    if first_font.lower() not in _system_fonts:
+    if is_web_font:
         gf_param  = first_font.replace(" ", "+")
         font_link = (
             f'  <link rel="preconnect" href="https://fonts.googleapis.com">\n'
