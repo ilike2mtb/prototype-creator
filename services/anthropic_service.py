@@ -458,6 +458,194 @@ Replace THEME_NAME with the actual theme machine name from the project plan.
 Write complete, real Twig — not stubs. Every template must be fully functional."""
 
 
+def _build_drupal_readme(plan: dict, drupal_ver: str) -> str:
+    """Generate a README.md deterministically from the plan — no LLM call needed."""
+    project_name   = plan.get("projectName",  "custom-project")
+    display_name   = plan.get("displayName",  "Custom Project")
+    summary        = plan.get("summary",      "A Drupal prototype.")
+    module_name    = project_name.replace("-", "_")
+    theme_name     = module_name   # convention: theme shares the module machine name
+    content_types  = plan.get("contentTypes", [])
+    taxonomies     = plan.get("taxonomies",   [])
+    pages          = plan.get("pages",        [])
+    tokens         = plan.get("designTokens", {})
+
+    # ── Content type table ────────────────────────────────────────────────────
+    ct_rows = ""
+    for ct in content_types:
+        fields = ", ".join(f["name"] for f in ct.get("fields", []))
+        ct_rows += f"| `{ct['name'].lower().replace(' ','_')}` | {ct['name']} | {fields or '—'} |\n"
+
+    # ── Taxonomy table ────────────────────────────────────────────────────────
+    tax_rows = ""
+    for t in taxonomies:
+        tax_rows += f"| `{t['name'].lower().replace(' ','_')}` | {t['name']} |\n"
+
+    # ── Pages table ───────────────────────────────────────────────────────────
+    page_rows = ""
+    for p in pages:
+        page_rows += f"| {p['name']} | `{p.get('path','/')}` | {p.get('description','')} |\n"
+
+    # ── Required contrib modules (inferred from info.yml dependencies) ────────
+    required_modules = [
+        "node", "field", "text", "image", "views", "taxonomy", "path", "options",
+        "entity_reference_revisions", "paragraphs",
+    ]
+    module_list = "\n".join(f"- `{m}`" for m in required_modules)
+
+    # ── Twig template table ───────────────────────────────────────────────────
+    twig_rows = "| `templates/layout/page.html.twig` | Main page layout (header, nav, content, footer) |\n"
+    twig_rows += "| `templates/layout/page--front.html.twig` | Homepage with hero section |\n"
+    for ct in content_types:
+        machine = ct['name'].lower().replace(' ', '_')
+        twig_rows += f"| `templates/node/node--{machine}.html.twig` | {ct['name']} node display |\n"
+
+    return f"""# {display_name}
+
+{summary}
+
+**Framework:** Drupal {drupal_ver}
+**Module:** `{module_name}`
+**Theme:** `{theme_name}`
+
+---
+
+## Prerequisites
+
+- Drupal {drupal_ver} installation
+- [Drush](https://www.drush.org/) 12+
+- The following Drupal core/contrib modules enabled:
+
+{module_list}
+
+---
+
+## Installation
+
+### Step 1 — Copy files into your Drupal project
+
+```bash
+# Copy the custom module
+cp -r web/modules/custom/{module_name} /path/to/drupal/web/modules/custom/
+
+# Copy the custom theme
+cp -r web/themes/custom/{theme_name} /path/to/drupal/web/themes/custom/
+```
+
+### Step 2 — Enable the module (imports all config automatically)
+
+```bash
+cd /path/to/drupal
+drush en {module_name} -y
+```
+
+Enabling the module automatically imports all YAML configuration files from
+`config/install/` — content types, fields, taxonomies, and views are created
+without any manual configuration in the Drupal UI.
+
+### Step 3 — Enable and set the theme
+
+```bash
+drush theme:enable {theme_name} -y
+drush config:set system.theme default {theme_name} -y
+drush cr
+```
+
+### Step 4 — Verify
+
+```bash
+drush status
+drush cim --preview   # preview any pending config
+drush cr              # final cache rebuild
+```
+
+---
+
+## Content Types
+
+| Machine Name | Label | Fields |
+|---|---|---|
+{ct_rows or "| *(none defined)* | | |\n"}
+
+## Taxonomies
+
+| Machine Name | Label |
+|---|---|
+{tax_rows or "| *(none defined)* | |\n"}
+
+## Pages / Views
+
+| Page | Path | Description |
+|---|---|---|
+{page_rows or "| *(none defined)* | | |\n"}
+
+---
+
+## File Structure
+
+```
+web/
+├── modules/custom/{module_name}/
+│   ├── {module_name}.info.yml          # Module definition & dependencies
+│   ├── {module_name}.module            # PHP hooks (preprocess, theme, help)
+│   └── config/install/
+│       ├── node.type.*.yml             # Content type definitions
+│       ├── field.storage.node.*.yml    # Field storage configs
+│       ├── field.field.node.*.yml      # Field instance (per-bundle) configs
+│       └── views.view.*.yml            # Listing view configs
+│
+└── themes/custom/{theme_name}/
+    ├── {theme_name}.info.yml           # Theme definition & regions
+    ├── {theme_name}.libraries.yml      # CSS/JS library definitions
+    ├── css/style.css                   # Stylesheet (CSS custom properties)
+    └── templates/
+        ├── layout/
+        │   ├── page.html.twig          # Main page layout
+        │   └── page--front.html.twig   # Homepage layout
+        └── node/
+            └── node--*.html.twig       # Per content-type templates
+```
+
+## Twig Templates Reference
+
+| Template | Purpose |
+|---|---|
+{twig_rows}
+---
+
+## Design Tokens
+
+These CSS custom properties are defined in `css/style.css` and control the
+visual appearance of the theme:
+
+| Token | Value |
+|---|---|
+| `--color-primary` | `{tokens.get('primaryColor', '#6366f1')}` |
+| `--color-secondary` | `{tokens.get('secondaryColor', '#8b5cf6')}` |
+| `--color-bg` | `{tokens.get('backgroundColor', '#111827')}` |
+| `--color-text` | `{tokens.get('textColor', '#f9fafb')}` |
+| `--radius` | `{tokens.get('borderRadius', '8px')}` |
+| `--font` | `{tokens.get('fontFamily', 'system-ui, sans-serif')}` |
+
+---
+
+## Uninstalling
+
+```bash
+drush pmu {module_name} -y
+drush theme:uninstall {theme_name} -y
+drush cr
+```
+
+> ⚠️ Uninstalling the module will remove all associated configuration.
+> Export your content first if needed: `drush dcer --skip-dependencies node`
+
+---
+
+*Generated by [Prototype Creator](https://prototype-creator-ui.onrender.com)*
+"""
+
+
 def _laravel_backend_system(plan: dict) -> str:
     return f"""You are an expert Laravel developer. Generate the backend application files for this project.
 
@@ -791,6 +979,13 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
             all_files.extend(twig_files)
             log.info("Phase 3b done — %d Twig file(s), %d total", len(twig_files), len(all_files))
 
+            # README — generated deterministically from the plan (no LLM call)
+            all_files.append({
+                "path":    "README.md",
+                "content": _build_drupal_readme(plan, resolved_drupal_ver),
+            })
+            log.info("README.md appended")
+
         else:
             # Phase 2: Laravel backend
             backend_text, _ = await _call(
@@ -923,12 +1118,14 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         yml_count    = sum(1 for f in all_files if f["path"].endswith(".yml"))
         css_count    = sum(1 for f in all_files if f["path"].endswith(".css"))
         html_count   = sum(1 for f in all_files if f["path"].endswith(".html"))
+        has_readme   = any(f["path"] == "README.md" for f in all_files)
         breakdown    = ", ".join(filter(None, [
             f"{yml_count} YML config{'s' if yml_count != 1 else ''}" if yml_count else None,
             f"{twig_count} Twig template{'s' if twig_count != 1 else ''}" if twig_count else None,
-            f"{php_count} PHP file{'s' if php_count != 1 else ''}"       if php_count else None,
-            f"{css_count} CSS file{'s' if css_count != 1 else ''}"       if css_count else None,
+            f"{php_count} PHP file{'s' if php_count != 1 else ''}"        if php_count else None,
+            f"{css_count} CSS file{'s' if css_count != 1 else ''}"        if css_count else None,
             f"{html_count} HTML prototype{'s' if html_count != 1 else ''}" if html_count else None,
+            "README.md"                                                     if has_readme else None,
         ]))
         detail = f" ({breakdown})" if breakdown else ""
         display = f"{summary}\n\n✅ Generated {file_count} file{'s' if file_count != 1 else ''}{detail}."
