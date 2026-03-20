@@ -760,8 +760,7 @@ async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> tuple:
 
 
 def _html_system(plan: dict, has_figma_content: bool = False,
-                 has_figma_images: bool = False,
-                 figma_image_urls: dict = None) -> str:
+                 has_figma_images: bool = False) -> str:
     """System prompt for the HTML phase.
     Used together with an assistant-prefill message (see run_chat Phase 4),
     so the model always continues from inside an already-open <body> — making
@@ -785,63 +784,62 @@ def _html_system(plan: dict, has_figma_content: bool = False,
     ) if has_figma_content else ""
 
     figma_style_note = (
-        "\n🎨 FIGMA IMAGES: Figma design screenshots are included in the user message. "
-        "Analyse the images and replicate the visual style:\n"
-        "- Extract the exact background color and apply it to <body> using Tailwind arbitrary values: class=\"bg-[#hex] ...\"\n"
-        "- Extract text colors and apply them: text-[#hex]\n"
-        "- Match the card/panel style (light cards on dark bg, or dark cards on light bg, etc.)\n"
-        "- Match the nav bar background and text color\n"
-        "- Use Tailwind arbitrary values freely: bg-[#1a1f2e], text-[#e2e8f0], border-[#2d3748], etc.\n"
-        "- Do NOT default to dark bg-gray-950 — use the actual Figma background color."
+        "\n🎨 FIGMA SCREENSHOTS INCLUDED — follow these rules strictly:\n"
+        "1. COLORS: Identify the EXACT hex colors in the screenshots.\n"
+        "   - Do NOT use generic Tailwind color names (blue-600, violet-500, gray-800).\n"
+        "   - Use ONLY Tailwind arbitrary-value hex: bg-[#hex], text-[#hex], border-[#hex].\n"
+        "   - Apply the brand color (most prominent non-white/black) to card headers, buttons, accents.\n"
+        "   - Apply the background color to sections and the nav.\n"
+        "2. LAYOUT: Study the screenshot layout and replicate it — do NOT default to 'heading + 4 cards'.\n"
+        "   - If Figma shows large touch-target cards with brand-colored headers, build those.\n"
+        "   - If Figma shows a hero with large text + CTA, build that instead of a card grid.\n"
+        "   - Each page should have a DIFFERENT layout matching its purpose.\n"
+        "3. NAV: Match the exact nav background color from the screenshot.\n"
+        "4. DO NOT embed any <img> tags showing the Figma screenshots — build the HTML equivalent instead."
     ) if has_figma_images else ""
 
-    # Tell Claude to embed the actual Figma frame images prominently at the TOP of sections
-    figma_embed_note = ""
-    if figma_image_urls:
-        url_list = list(figma_image_urls.values())[:3]
-        url_lines = "\n".join(f"  Frame {i + 1}: {url}" for i, url in enumerate(url_list))
-        first_url = url_list[0] if url_list else ""
-        rest_urls = url_list[1:]
-        rest_note = ""
-        if rest_urls:
-            rest_note = (
-                "  For pages 2+, place their image as a full-width hero BELOW the page heading "
-                "but ABOVE the content cards (h-72 or h-96, object-cover, rounded-2xl).\n"
-                "  Remaining URLs: " + " | ".join(rest_urls)
-            )
-        figma_embed_note = (
-            f"\n🖼️ FIGMA FRAME IMAGES — use these as PROMINENT HERO IMAGES, not decorative footers.\n"
-            f"  RULE: Every <img> must appear near the TOP of its section, not at the bottom.\n"
-            f"  For page 0 (homepage): place this image as the FIRST thing inside the section,\n"
-            f"  before any headings or cards. Use class='w-full h-96 object-cover rounded-2xl shadow-xl mb-8'\n"
-            f"  Homepage hero URL: {first_url}\n"
-            f"{rest_note}\n"
-            f"  All available URLs:\n{url_lines}\n"
-            f"  Do NOT use placeholder src values — only use the URLs listed above."
-        )
+    # Determine brand color for card headers (from plan tokens, or a safe fallback)
+    tokens     = plan.get("designTokens", {})
+    brand_hex  = tokens.get("primaryColor",   "#6366f1")
+    accent_hex = tokens.get("secondaryColor", "#8b5cf6")
+    bg_hex     = tokens.get("backgroundColor", "#ffffff")
+    fg_hex     = tokens.get("textColor",       "#1f2937")
 
     return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is pre-written. \
 Continue from inside the open <body> tag.
-{figma_content_note}{figma_style_note}{figma_embed_note}
-EFFICIENCY RULES (token budget is limited — follow strictly):
-- NO <style> blocks or custom CSS — Tailwind only
-- NO SVG icons — use 1-2 char emoji instead (🏠 📄 👥 🔍 etc.)
-- NO long lorem ipsum — use short (5-10 word) placeholder text
-- Cards must be brief: just a coloured header + title + 1 line description
-- Max 4 cards per section — do not add more
-- MUST generate ALL {len(pages)} pages — finishing all pages matters more than detail in any one
+{figma_content_note}{figma_style_note}
+TOKEN BUDGET RULES (follow strictly):
+- NO <style> blocks or custom CSS — Tailwind arbitrary values only
+- NO SVG — use 1-2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 etc.)
+- Short text only — 5-10 words per label, 1 sentence descriptions
+- Max 4 cards per section
+- MUST complete ALL {len(pages)} pages — speed matters more than elaboration
+
+COLORS — use these exact values from the design tokens (do not substitute):
+  Brand/primary: {brand_hex}    Accent/secondary: {accent_hex}
+  Background: {bg_hex}          Text: {fg_hex}
+  Apply brand color to: card header bands, active nav, primary buttons, key numbers.
+  Use bg-[{brand_hex}] not bg-primary (Tailwind JIT may not resolve custom tokens).
 
 Project: {plan.get("displayName", "Prototype")}
-Pages ({len(pages)}):
+Pages ({len(pages)}) — give EACH page a DIFFERENT layout:
 {page_list}
 Content types: {ct_list}
 
-Write in this order — no deviations:
-1. <nav> — dark bar: project name left, one <button onclick="showPage(N)"> per page right
-2. {len(pages)} sections:
-   <section id="p0" class="page p-8 max-w-6xl mx-auto">heading + 4 simple cards</section>
-   <section id="p1" class="page hidden p-8 max-w-6xl mx-auto">heading + 4 simple cards</section>
-   ... repeat for all {len(pages)} pages ...
+LAYOUT GUIDE per page type:
+- Home/Landing: Large centred heading + 2×2 grid of large touch-target cards (h-40) with brand-colored tops
+- Listing/Challenges: Full-width clickable rows OR 2-col card grid with colored header bands
+- Detail/Case study: Vertical story steps (numbered timeline) OR 3-col feature cards
+- Results/Metrics: Large bold stat numbers in coloured circles + CTA button
+- Directory/All: Filter pills row + 2-col card grid
+
+Write in this order:
+1. <nav class="bg-[{bg_hex if bg_hex != '#ffffff' else '#f8f8f8'}] border-b px-6 py-4 flex items-center justify-between">
+     Brand name left | one <button onclick="showPage(N)"> per page right
+   </nav>
+2. {len(pages)} sections — first visible, rest hidden:
+   <section id="p0" class="page p-8 max-w-5xl mx-auto"> ... </section>
+   <section id="p1" class="page hidden p-8 max-w-5xl mx-auto"> ... </section>
 3. </body>
 4. <script>
      function showPage(n){{document.querySelectorAll('.page').forEach(e=>e.classList.add('hidden'));document.getElementById('p'+n).classList.remove('hidden');}}
@@ -850,13 +848,13 @@ Write in this order — no deviations:
 5. </html>
 6. </FILE>
 
-Simple card template (copy this pattern — do not elaborate):
-<div class="bg-white/10 rounded-xl overflow-hidden shadow">
-  <div class="h-24 bg-gradient-to-r from-primary to-secondary flex items-center px-4">
-    <span class="text-2xl">📄</span>
-    <h3 class="ml-3 font-bold text-white">Card Title</h3>
+Card template with EXACT brand colors (use this pattern):
+<div class="rounded-2xl overflow-hidden shadow-lg border border-[{fg_hex}]/10">
+  <div class="h-28 bg-[{brand_hex}] flex items-center px-6">
+    <span class="text-3xl mr-3">📄</span>
+    <h3 class="font-semibold text-white text-lg leading-tight">Card Title</h3>
   </div>
-  <div class="p-4 text-foreground/70 text-sm">Brief description here.</div>
+  <div class="p-5 bg-white text-[{fg_hex}]/70 text-sm">Brief description.</div>
 </div>
 
 End your output with </FILE>."""
@@ -1171,7 +1169,6 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
                 plan,
                 has_figma_content=bool(figma_content),
                 has_figma_images=bool(figma_images),
-                figma_image_urls=figma_image_urls or None,
             ),
             messages=html_messages,
             max_tokens=HTML_MAX_TOKENS,
