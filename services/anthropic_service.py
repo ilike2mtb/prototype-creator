@@ -500,6 +500,11 @@ def _build_drupal_readme(plan: dict, drupal_ver: str) -> str:
         machine = ct['name'].lower().replace(' ', '_')
         twig_rows += f"| `templates/node/node--{machine}.html.twig` | {ct['name']} node display |\n"
 
+    # Pre-compute fallback strings to avoid backslash-in-f-string-expression errors (Python < 3.12)
+    ct_section   = ct_rows   or "| *(none defined)* | | |\n"
+    tax_section  = tax_rows  or "| *(none defined)* | |\n"
+    page_section = page_rows or "| *(none defined)* | | |\n"
+
     return f"""# {display_name}
 
 {summary}
@@ -565,19 +570,17 @@ drush cr              # final cache rebuild
 
 | Machine Name | Label | Fields |
 |---|---|---|
-{ct_rows or "| *(none defined)* | | |\n"}
-
+{ct_section}
 ## Taxonomies
 
 | Machine Name | Label |
 |---|---|
-{tax_rows or "| *(none defined)* | |\n"}
-
+{tax_section}
 ## Pages / Views
 
 | Page | Path | Description |
 |---|---|---|
-{page_rows or "| *(none defined)* | | |\n"}
+{page_section}
 
 ---
 
@@ -713,45 +716,52 @@ def _extract_frame_ids(figma_data: dict, max_frames: int = 3) -> list:
     return ids
 
 
-async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> list:
-    """Export the first few Figma frames as PNG and return a list of
-    base64-encoded images suitable for the Anthropic vision API.
-    Returns [] on any error so callers can degrade gracefully.
+async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> tuple:
+    """Export the first few Figma frames as PNG.
+
+    Returns (b64_images, url_map) where:
+      b64_images  — list of base64 PNG strings for Anthropic vision API
+      url_map     — {frame_id: cdn_url} so the prototype can embed <img> tags
+
+    Returns ([], {}) on any error so callers can degrade gracefully.
     """
     try:
-        frame_ids = _extract_frame_ids(figma_data, max_frames=2)
+        frame_ids = _extract_frame_ids(figma_data, max_frames=3)
         if not frame_ids:
-            return []
+            return [], {}
 
         exported = await export_images(
             file_key=figma_params.get("file_key"),
             ids=",".join(frame_ids),
             format="png",
-            scale=1,          # 1× keeps file size reasonable for an iPad frame
+            scale=1,          # 1× keeps file size reasonable
         )
         image_map = exported.get("images") or {}
         if not image_map:
-            return []
+            return [], {}
 
-        results = []
+        b64_results = []
+        url_map: dict = {}
         async with _httpx.AsyncClient(timeout=30) as client:
             for fid in frame_ids:
                 url = image_map.get(fid)
                 if not url:
                     continue
+                url_map[fid] = url           # keep CDN URL for <img> embedding
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     b64 = base64.b64encode(resp.content).decode()
-                    results.append(b64)
-        return results
+                    b64_results.append(b64)
+        return b64_results, url_map
 
     except Exception as exc:
         log.warning("Phase 4: frame image export/download failed — %s", exc)
-        return []
+        return [], {}
 
 
 def _html_system(plan: dict, has_figma_content: bool = False,
-                 has_figma_images: bool = False) -> str:
+                 has_figma_images: bool = False,
+                 figma_image_urls: dict = None) -> str:
     """System prompt for the HTML phase.
     Used together with an assistant-prefill message (see run_chat Phase 4),
     so the model always continues from inside an already-open <body> — making
@@ -785,9 +795,24 @@ def _html_system(plan: dict, has_figma_content: bool = False,
         "- Do NOT default to dark bg-gray-950 — use the actual Figma background color."
     ) if has_figma_images else ""
 
+    # Tell Claude to embed the actual Figma frame images as <img> tags
+    figma_embed_note = ""
+    if figma_image_urls:
+        url_lines = "\n".join(
+            f"  Frame {i + 1}: {url}"
+            for i, url in enumerate(list(figma_image_urls.values())[:3])
+        )
+        figma_embed_note = (
+            f"\n🖼️ FIGMA FRAME IMAGES — embed these as real <img> tags in the prototype.\n"
+            f"  Use them for: hero section background, card thumbnails, or a 'Design Reference' section.\n"
+            f"  Example: <img src=\"URL\" class=\"w-full h-48 object-cover rounded-xl\" alt=\"Figma design\">\n"
+            f"  Available Figma frame URLs:\n{url_lines}\n"
+            f"  Place at least one <img> tag using these URLs — do NOT use placeholder src values."
+        )
+
     return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is pre-written. \
 Continue from inside the open <body> tag.
-{figma_content_note}{figma_style_note}
+{figma_content_note}{figma_style_note}{figma_embed_note}
 EFFICIENCY RULES (token budget is limited — follow strictly):
 - NO <style> blocks or custom CSS — Tailwind only
 - NO SVG icons — use 1-2 char emoji instead (🏠 📄 👥 🔍 etc.)
@@ -837,24 +862,44 @@ def _html_prefill(plan: dict) -> str:
     secondary = tokens.get("secondaryColor", "#8b5cf6")
     bg        = tokens.get("backgroundColor", "")
     fg        = tokens.get("textColor",       "")
+    font      = tokens.get("fontFamily",      "system-ui, sans-serif")
     title     = plan.get("displayName", "Prototype")
 
     # Build a valid JS object literal (no f-string brace collision)
-    bg_token = bg or "#111827"
-    fg_token = fg or "#f9fafb"
+    bg_token   = bg or "#111827"
+    fg_token   = fg or "#f9fafb"
+    first_font = font.split(",")[0].strip().strip("'\"")
     tw_cfg = (
         'tailwind.config={'
-        'theme:{extend:{colors:{'
+        'theme:{extend:{'
+        'colors:{'
         f'primary:"{primary}",'
         f'secondary:"{secondary}",'
         f'background:"{bg_token}",'
         f'foreground:"{fg_token}"'
-        '}}}}'
+        '},'
+        'fontFamily:{'
+        f"sans:['{first_font}','system-ui','sans-serif']"
+        '}'
+        '}}}'
     )
+
+    # Google Fonts: load the font if it's a named web font (not a system font)
+    _system_fonts = {"system-ui", "ui-sans-serif", "sans-serif", "serif",
+                     "monospace", "ui-serif", "ui-monospace", "cursive", "fantasy"}
+    font_link = ""
+    if first_font.lower() not in _system_fonts:
+        gf_param  = first_font.replace(" ", "+")
+        font_link = (
+            f'  <link rel="preconnect" href="https://fonts.googleapis.com">\n'
+            f'  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+            f'  <link href="https://fonts.googleapis.com/css2?family={gf_param}'
+            f':wght@300;400;500;600;700&display=swap" rel="stylesheet">\n'
+        )
 
     # Apply backgroundColor/textColor directly to <body> so the model cannot
     # accidentally override them. Falls back to Tailwind defaults if not set.
-    body_classes = "min-h-screen"
+    body_classes = "min-h-screen font-sans"
     if bg:
         body_classes += f" bg-[{bg}]"
     if fg:
@@ -868,6 +913,7 @@ def _html_prefill(plan: dict) -> str:
         f'  <meta charset="UTF-8">\n'
         f'  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
         f'  <title>{title}</title>\n'
+        f'{font_link}'
         f'  <script src="https://cdn.tailwindcss.com"></script>\n'
         f'  <script>{tw_cfg}</script>\n'
         f'</head>\n'
@@ -916,19 +962,40 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         try:
             vars_data = await get_variables(file_key=figma_params.get("file_key"))
             tokens = plan.setdefault("designTokens", {})
-            for v in (vars_data.get("variables") or []):
-                n = (v.get("name") or "").lower()
+            all_color_vars = [
+                v for v in (vars_data.get("variables") or [])
+                if v.get("hex")
+            ]
+
+            for v in all_color_vars:
+                n = (v.get("name") or "").lower().replace("/", " ").replace("-", " ").replace("_", " ")
                 h = v.get("hex")
-                if not h:
-                    continue
-                if any(k in n for k in ("background", "bg", "surface", "canvas")):
+                if any(k in n for k in ("background", "bg ", "surface", "canvas", "base", "page")):
                     tokens.setdefault("backgroundColor", h)
-                elif any(k in n for k in ("text", "foreground", "on-", "content")):
+                elif any(k in n for k in ("text", "foreground", "on ", "body", "content", "label")):
                     tokens.setdefault("textColor", h)
-                elif "primary" in n:
+                elif any(k in n for k in ("primary", "brand", "accent", "action", "blue", "key")):
                     tokens.setdefault("primaryColor", h)
-                elif "secondary" in n:
+                elif any(k in n for k in ("secondary", "support", "purple", "violet")):
                     tokens.setdefault("secondaryColor", h)
+
+            # Fallback: if primaryColor still unset, pick the first non-white/black color
+            if "primaryColor" not in tokens and all_color_vars:
+                neutral_hex = {"#ffffff", "#000000", "#fff", "#000"}
+                for v in all_color_vars:
+                    h = v.get("hex", "").lower()
+                    if h not in neutral_hex and h not in (tokens.get("backgroundColor",""), tokens.get("textColor","")):
+                        tokens.setdefault("primaryColor", v["hex"])
+                        break
+
+            # Extract font family from variables if present
+            for v in (vars_data.get("variables") or []):
+                if v.get("type") == "STRING":
+                    n = (v.get("name") or "").lower()
+                    val = v.get("value", "")
+                    if val and any(k in n for k in ("font", "typeface", "typography")):
+                        tokens.setdefault("fontFamily", val)
+
             log.info("Design tokens after extraction: %s", tokens)
         except Exception as exc:
             log.warning("Deterministic token extraction failed — %s", exc)
@@ -1010,10 +1077,11 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         log.info("Phase 4: HTML prototype (waiting %ds for extended token budget)…", HTML_PHASE_DELAY)
         await asyncio.sleep(HTML_PHASE_DELAY)
 
-        # Fetch Figma node content (text labels) + frame images (visual style).
-        figma_content  = ""
-        figma_images   = []   # list of base64-encoded PNG strings
-        figma_raw_data = {}
+        # Fetch Figma node content (text labels) + frame images (visual style + embed).
+        figma_content    = ""
+        figma_images     = []   # base64 PNG strings for Anthropic vision
+        figma_image_urls = {}   # {frame_id: cdn_url} for <img> embedding
+        figma_raw_data   = {}
 
         if mode in ("figma", "both") and figma_params:
             try:
@@ -1029,9 +1097,14 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
                 log.warning("Phase 4: Figma node fetch failed — %s", exc)
 
             try:
-                log.info("Phase 4: Exporting Figma frame images for style matching…")
-                figma_images = await _fetch_figma_images(figma_params, figma_raw_data)
-                log.info("Phase 4: %d Figma frame image(s) downloaded", len(figma_images))
+                log.info("Phase 4: Exporting Figma frame images for style matching + embedding…")
+                figma_images, figma_image_urls = await _fetch_figma_images(
+                    figma_params, figma_raw_data
+                )
+                log.info(
+                    "Phase 4: %d Figma frame image(s) downloaded, %d URL(s) for embedding",
+                    len(figma_images), len(figma_image_urls),
+                )
             except Exception as exc:
                 log.warning("Phase 4: Figma image export failed — %s", exc)
 
@@ -1081,6 +1154,7 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
                 plan,
                 has_figma_content=bool(figma_content),
                 has_figma_images=bool(figma_images),
+                figma_image_urls=figma_image_urls or None,
             ),
             messages=html_messages,
             max_tokens=HTML_MAX_TOKENS,
