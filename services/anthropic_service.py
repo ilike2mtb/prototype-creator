@@ -4,7 +4,7 @@ from config import settings
 from services.integrations import (
     get_frames, get_nodes, export_images,
     get_variables, get_components, get_styles,
-    get_file_summary,
+    get_file_summary, search_file,
     get_architecture_plan, get_architecture_template,
 )
 
@@ -138,6 +138,26 @@ ALL_TOOLS = [
         }
     },
     {
+        "name": "search_figma_nodes",
+        "description": (
+            "Search the full Figma file tree by node name, text content, or node ID. "
+            "Returns matching nodes with their paths, bounds, and parent IDs. "
+            "Use this to locate specific components, text layers, or frames by keyword "
+            "rather than traversing the full tree with get_figma_frames/get_figma_nodes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query":     {"type": "string",  "description": "Case-insensitive search term matched against node names, text content, and IDs."},
+                "file_key":  {"type": "string",  "description": "Figma file key (optional — uses default if omitted)"},
+                "node_type": {"type": "string",  "description": "Optional exact Figma node type filter, e.g. FRAME, TEXT, COMPONENT, INSTANCE"},
+                "page_name": {"type": "string",  "description": "Optional exact page name to restrict the search scope"},
+                "limit":     {"type": "integer", "description": "Maximum number of matches to return (default 25, max 100)"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "get_dci_architecture_plan",
         "description": "Fetch the DCI architecture plan from SharePoint.",
         "input_schema": {"type": "object", "properties": {}}
@@ -157,6 +177,7 @@ TOOL_MAP = {
     "get_figma_variables":            lambda i: get_variables(**i),
     "get_figma_components":           lambda i: get_components(**i),
     "get_figma_styles":               lambda i: get_styles(**i),
+    "search_figma_nodes":             lambda i: search_file(**i),
     "get_dci_architecture_plan":      lambda _: get_architecture_plan(),
     "get_architecture_plan_template": lambda _: get_architecture_template(),
 }
@@ -180,7 +201,7 @@ def _select_tools(mode: str, framework: str, output_type: str) -> list:
     )
     FIGMA_TOOLS = {
         "get_figma_summary", "get_figma_frames", "get_figma_nodes", "export_frame_images",
-        "get_figma_variables", "get_figma_components", "get_figma_styles",
+        "get_figma_variables", "get_figma_components", "get_figma_styles", "search_figma_nodes",
     }
     ARCH_TOOLS = {"get_dci_architecture_plan", "get_architecture_plan_template"}
     return [t for t in ALL_TOOLS if
@@ -517,7 +538,7 @@ def _build_drupal_readme(plan: dict, drupal_ver: str) -> str:
 
 ## Prerequisites
 
-- Drupal {drupal_ver} installation
+- Drupal {drupal_ver} installation (or DDEV local environment — see below)
 - [Drush](https://www.drush.org/) 12+
 - The following Drupal core/contrib modules enabled:
 
@@ -527,7 +548,72 @@ def _build_drupal_readme(plan: dict, drupal_ver: str) -> str:
 
 ## Installation
 
-### Step 1 — Copy files into your Drupal project
+### Option A — Using the `practical` DDEV project template (recommended)
+
+The `practical` repo is HMP Global's standard Drupal starter. Clone it, then
+drop these generated files into the project root before running `ddev start`.
+
+#### 0. Prerequisites (first time only)
+
+```bash
+# Install DDEV: https://ddev.readthedocs.io/en/stable/users/install/ddev-installation/
+# Then authenticate with HMP Global's private Packagist mirror:
+ddev exec composer config http-basic.repo.packagist.com token <YOUR_ORG_TOKEN>
+# Token: https://packagist.com/orgs/hmp-global/settings/auth
+```
+
+#### 1. Clone `practical` and copy generated files
+
+```bash
+git clone git@github.com:HMP-Global/practical.git my-new-project
+cd my-new-project
+
+# Unzip the prototype-creator output into the project root
+unzip /path/to/prototype-output.zip -d .
+```
+
+#### 2. Start DDEV
+
+```bash
+ddev start
+# DDEV runs composer install automatically on first start.
+# If it fails with a 401, complete the Packagist auth step above first.
+```
+
+#### 3. Install Drupal (fresh database only — skip if importing a DB dump)
+
+```bash
+ddev drush site:install --account-name=admin --account-pass=admin -y
+```
+
+#### 4. Enable the module (auto-imports all config/install YAMLs)
+
+```bash
+ddev drush en {module_name} -y
+ddev drush cr
+```
+
+#### 5. Enable and set the theme
+
+```bash
+ddev drush theme:enable {theme_name} -y
+ddev drush config:set system.theme default {theme_name} -y
+ddev drush cr
+```
+
+#### 6. Verify
+
+```bash
+ddev drush status
+ddev drush cim --preview   # preview any pending config
+ddev drush cr              # final cache rebuild
+```
+
+---
+
+### Option B — Vanilla Drupal (no DDEV)
+
+#### Step 1 — Copy files into your Drupal project
 
 ```bash
 # Copy the custom module
@@ -537,7 +623,7 @@ cp -r web/modules/custom/{module_name} /path/to/drupal/web/modules/custom/
 cp -r web/themes/custom/{theme_name} /path/to/drupal/web/themes/custom/
 ```
 
-### Step 2 — Enable the module (imports all config automatically)
+#### Step 2 — Enable the module (imports all config automatically)
 
 ```bash
 cd /path/to/drupal
@@ -548,7 +634,7 @@ Enabling the module automatically imports all YAML configuration files from
 `config/install/` — content types, fields, taxonomies, and views are created
 without any manual configuration in the Drupal UI.
 
-### Step 3 — Enable and set the theme
+#### Step 3 — Enable and set the theme
 
 ```bash
 drush theme:enable {theme_name} -y
@@ -556,7 +642,7 @@ drush config:set system.theme default {theme_name} -y
 drush cr
 ```
 
-### Step 4 — Verify
+#### Step 4 — Verify
 
 ```bash
 drush status
@@ -1031,10 +1117,11 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         log.info("Phase 2: Backend files (waiting %ds for rate-limit reset)…", PHASE_DELAY)
         await asyncio.sleep(PHASE_DELAY)
         if is_drupal:
-            # Phase 2: Drupal module (backend)
+            # Phase 2: Drupal module (backend) — needs full budget for field.storage + field.field YAMLs
             backend_text, _ = await _call(
                 system=_drupal_backend_system(plan, resolved_drupal_ver),
                 messages=generation_msg,
+                max_tokens=HTML_MAX_TOKENS,
             )
             all_files.extend(_parse_files(backend_text))
             log.info("Phase 2 done — %d backend files", len(all_files))
@@ -1055,7 +1142,7 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
             twig_text, _ = await _call(
                 system=_drupal_twig_system(plan, resolved_drupal_ver),
                 messages=generation_msg,
-                max_tokens=MAX_TOKENS,
+                max_tokens=HTML_MAX_TOKENS,
             )
             twig_files = _parse_files(twig_text)
             all_files.extend(twig_files)
