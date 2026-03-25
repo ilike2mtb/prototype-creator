@@ -29,12 +29,12 @@ export default function Onboarding({ onComplete }) {
   const [mode,         setMode]    = useState(null);
   const [figmaParams,  setFigma]   = useState({});
   const [inputVal,     setInput]   = useState("");
-  const [awaitingField,setAwait]   = useState(null);
+  const [urlError,     setUrlErr]  = useState(false);
   const [history,      setHistory] = useState([]);  // stack of state snapshots
 
   // ── History helpers ───────────────────────────────────────────────────────
   function pushHistory() {
-    setHistory(h => [...h, { step, framework, outputType, mode, figmaParams, awaitingField }]);
+    setHistory(h => [...h, { step, framework, outputType, mode, figmaParams }]);
   }
 
   function goBack() {
@@ -46,8 +46,8 @@ export default function Onboarding({ onComplete }) {
     setOutput(prev.outputType);
     setMode(prev.mode);
     setFigma(prev.figmaParams);
-    setAwait(prev.awaitingField);
     setInput("");
+    setUrlErr(false);
   }
 
   // ── Step 1: Framework ────────────────────────────────────────────────────
@@ -85,46 +85,41 @@ export default function Onboarding({ onComplete }) {
     if (m === "figma" || m === "both") {
       pushHistory();
       setMode(m);
-      setStep("figmaDefaults");
+      setStep("figmaUrl");
     } else {
       onComplete({ framework, outputType, mode: m, drupalVersion: FW_DRUPAL_VER[framework], figmaParams: {} });
     }
   }
 
-  // ── Step 4: Figma defaults ───────────────────────────────────────────────
-  function pickFigmaDefaults(label) {
-    if (label === "Yes, use defaults") {
-      onComplete({ framework, outputType, mode, drupalVersion: FW_DRUPAL_VER[framework], figmaParams: {} });
-    } else {
-      pushHistory();
-      setStep("figmaConfig");
-      setAwait("file_key");
+  // ── Step 4: Figma URL ────────────────────────────────────────────────────
+  function parseFigmaUrl(url) {
+    try {
+      const u = new URL(url.trim());
+      const parts = u.pathname.split("/").filter(Boolean);
+      const idx = parts.findIndex(p => p === "file" || p === "design" || p === "proto");
+      if (idx === -1 || !parts[idx + 1]) return null;
+      const file_key = parts[idx + 1];
+      const rawNodeId = u.searchParams.get("node-id");
+      const ids = rawNodeId ? rawNodeId.replace(/-/g, ":") : undefined;
+      return { file_key, ...(ids ? { ids } : {}) };
+    } catch {
+      return null;
     }
   }
 
-  // ── Step 5: Figma config ─────────────────────────────────────────────────
-  const fieldLabels = { file_key: "Figma File Key", ids: "Node ID(s) — comma-separated", depth: "Depth (1–10)" };
-
-  function submitField() {
-    const val  = inputVal.trim();
-    const skip = val.toLowerCase() === "skip";
-
-    if (awaitingField === "file_key") {
-      pushHistory();
-      if (!skip) setFigma(p => ({ ...p, file_key: val }));
-      setAwait("ids");
-      setInput("");
-    } else if (awaitingField === "ids") {
-      pushHistory();
-      if (!skip) setFigma(p => ({ ...p, ids: val }));
-      setAwait("depth");
-      setInput("");
-    } else if (awaitingField === "depth") {
-      const finalParams = (!skip && !isNaN(parseInt(val)))
-        ? { ...figmaParams, depth: parseInt(val) }
-        : figmaParams;
-      onComplete({ framework, outputType, mode, drupalVersion: FW_DRUPAL_VER[framework], figmaParams: finalParams });
+  function submitFigmaUrl() {
+    const val = inputVal.trim();
+    if (!val) {
+      // blank → use server defaults
+      onComplete({ framework, outputType, mode, drupalVersion: FW_DRUPAL_VER[framework], figmaParams: {} });
+      return;
     }
+    const parsed = parseFigmaUrl(val);
+    if (!parsed) {
+      setUrlErr(true);
+      return;
+    }
+    onComplete({ framework, outputType, mode, drupalVersion: FW_DRUPAL_VER[framework], figmaParams: parsed });
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -196,42 +191,41 @@ export default function Onboarding({ onComplete }) {
         </>
       )}
 
-      {/* Step 4 — Figma defaults */}
-      {step === "figmaDefaults" && (
+      {/* Step 4 — Figma URL */}
+      {step === "figmaUrl" && (
         <>
-          <p style={{ margin: 0, fontSize: 15, color: "#a0aec0" }}>Use default Figma parameters?</p>
-          <div>
-            {["Yes, use defaults", "No, I'll configure them"].map(l => pill(l, pickFigmaDefaults))}
-          </div>
-        </>
-      )}
-
-      {/* Step 5 — Figma config */}
-      {step === "figmaConfig" && awaitingField && (
-        <>
-          <p style={{ margin: 0, fontSize: 15, color: "#a0aec0" }}>
-            {fieldLabels[awaitingField]}{" "}
-            <span style={{ color: "#4a5568", fontSize: 12 }}>(or type <code>skip</code>)</span>
+          <p style={{ margin: 0, fontSize: 15, color: "#a0aec0" }}>Paste your Figma URL</p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#4a5568", textAlign: "center", maxWidth: 380 }}>
+            e.g. <code style={{ color: "#718096" }}>https://www.figma.com/design/AbCd…?node-id=12-34</code>
+            <br />Leave blank to use the server's default Figma file.
           </p>
           <input
             value={inputVal}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && submitField()}
+            onChange={e => { setInput(e.target.value); setUrlErr(false); }}
+            onKeyDown={e => e.key === "Enter" && submitFigmaUrl()}
             autoFocus
+            placeholder="https://www.figma.com/design/…"
             style={{
-              padding: "10px 14px", borderRadius: 8, border: "1px solid #4a5568",
-              background: "#2d3748", color: "#e2e8f0", fontSize: 14, width: 300, outline: "none",
+              padding: "10px 14px", borderRadius: 8,
+              border: `1px solid ${urlError ? "#fc8181" : "#4a5568"}`,
+              background: "#2d3748", color: "#e2e8f0", fontSize: 14,
+              width: 380, outline: "none",
             }}
           />
+          {urlError && (
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: "#fc8181" }}>
+              Couldn't parse a Figma file key from that URL — please check and try again.
+            </p>
+          )}
           <button
-            onClick={submitField}
+            onClick={submitFigmaUrl}
             style={{
               padding: "8px 20px", borderRadius: 8,
               background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
               color: "#fff", border: "none", cursor: "pointer", fontSize: 14,
             }}
           >
-            Next
+            Continue
           </button>
         </>
       )}
