@@ -10,9 +10,15 @@ This repo includes workspace settings in [.vscode/settings.json](/Users/TBURKE/p
 - `GET /`
 - `GET /health`
 - `GET /sharepoint/dci-architecture-plan`
-- `GET /figma/files/{file_key}`
-- `GET /figma/files/{file_key}/nodes?ids=...&depth=...`
-- `GET /figma/files/{file_key}/images?ids=...&format=png&scale=1`
+- `GET /figma/file/summary`
+- `GET /figma/file/search?query=...&type=TEXT&page_name=...&limit=...`
+- `GET /figma/file/nodes?ids=...&depth=...`
+- `GET /figma/file/frames?ids=...&depth=...`
+- `GET /figma/file/images?ids=...&format=png&scale=1`
+- `GET /figma/file/frames/images?ids=...&format=png&scale=1`
+- `GET /figma/file/components`
+- `GET /figma/file/styles`
+- `GET /figma/file/variables`
 
 ## Auth model
 - Calls to `/figma/*` and `/sharepoint/*` require header: `X-Service-Key: <SERVICE_KEY>` if `SERVICE_KEY` is set.
@@ -55,4 +61,11 @@ This repo includes workspace settings in [.vscode/settings.json](/Users/TBURKE/p
 4. Save the action and test with:
    - `GET /health` for connectivity
    - `GET /sharepoint/dci-architecture-plan` for dynamic spreadsheet data
-   - `GET /figma/files/{file_key}` for Figma calls
+   - `GET /figma/file/summary` for first-pass Figma context
+
+## Recommended Custom GPT Figma flow
+1. Call `GET /figma/file/summary` first to understand file size and available design-system data.
+2. Use `GET /figma/file/search` to find likely nodes by name, text, or node ID before requesting deeper payloads.
+3. Call `GET /figma/file/nodes` only for the matched IDs you actually need.
+4. Use `GET /figma/file/frames` when the GPT needs a broader screen inventory or frame-level geometry.
+5. Use `GET /figma/file/images` or `GET /figma/file/frames/images` only when visual inspection is needed, since image exports are slower.

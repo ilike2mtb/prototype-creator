@@ -16,6 +16,7 @@ from models import (
     FigmaFramesResponse,
     FigmaImagesResponse,
     FigmaNodesResponse,
+    FigmaSearchResponse,
     FigmaStylesResponse,
     FigmaVariablesResponse,
 )
@@ -124,6 +125,56 @@ async def get_file_nodes(
     data = await figma_service.get_nodes(file_key=file_key, ids=ids, depth=depth)
     _raise_for_figma_error(data)
     return FigmaNodesResponse.model_validate(data)
+
+
+@router.get(
+    "/figma/file/search",
+    response_model=FigmaSearchResponse,
+    responses=FIGMA_ERROR_RESPONSES,
+    summary="Search file nodes",
+    description="Search the full Figma file tree by node name, text content, or node ID and return GPT-friendly matches with paths and bounds.",
+)
+async def search_file_nodes(
+    _: None = Depends(require_service_key),
+    query: str = Query(
+        ...,
+        min_length=1,
+        description="Case-insensitive search term matched against node names, text, and IDs.",
+        examples=["hero button"],
+    ),
+    file_key: Optional[str] = Query(
+        default=None,
+        description="Optional Figma file key override.",
+        examples=["AbCdEfGhIjKlMn"],
+    ),
+    node_type: Optional[str] = Query(
+        default=None,
+        alias="type",
+        description="Optional exact Figma node type filter such as FRAME, TEXT, COMPONENT, or INSTANCE.",
+        examples=["TEXT"],
+    ),
+    page_name: Optional[str] = Query(
+        default=None,
+        description="Optional exact page name filter.",
+        examples=["Mobile"],
+    ),
+    limit: int = Query(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum number of matches to return.",
+        examples=[10],
+    ),
+) -> FigmaSearchResponse:
+    data = await figma_service.search_file(
+        query=query,
+        file_key=file_key,
+        node_type=node_type,
+        page_name=page_name,
+        limit=limit,
+    )
+    _raise_for_figma_error(data)
+    return FigmaSearchResponse.model_validate(data)
 
 
 @router.get(

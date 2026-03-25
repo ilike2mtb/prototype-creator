@@ -38,12 +38,19 @@ class FigmaNode(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     type: Optional[str] = None
+    visible: Optional[bool] = None
+    characters: Optional[str] = None
     layoutMode: Optional[str] = None
     itemSpacing: Optional[float] = None
     paddingTop: Optional[float] = None
     paddingBottom: Optional[float] = None
     paddingLeft: Optional[float] = None
     paddingRight: Optional[float] = None
+    componentId: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
     children: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -73,6 +80,31 @@ class FigmaFileSummaryResponse(BaseModel):
 class FigmaNodesResponse(BaseModel):
     name: Optional[str] = None
     nodes: dict[str, Optional[FigmaNode]] = Field(default_factory=dict)
+
+
+class FigmaSearchResult(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+    pageName: Optional[str] = None
+    path: Optional[str] = None
+    parentId: Optional[str] = None
+    textPreview: Optional[str] = None
+    componentId: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+
+
+class FigmaSearchResponse(BaseModel):
+    name: Optional[str] = None
+    query: str
+    nodeType: Optional[str] = None
+    pageName: Optional[str] = None
+    totalMatches: int
+    limit: int
+    matches: list[FigmaSearchResult] = Field(default_factory=list)
 
 
 class FigmaImagesResponse(BaseModel):

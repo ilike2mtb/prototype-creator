@@ -29,6 +29,7 @@ def _timeout(read: Optional[float] = None) -> httpx.Timeout:
 
 
 def _slim_figma_node(node: dict) -> dict:
+    bounds = node.get("absoluteBoundingBox") if isinstance(node, dict) else None
     children = node.get("children")
     slim_children = []
     if isinstance(children, list):
@@ -39,12 +40,19 @@ def _slim_figma_node(node: dict) -> dict:
         "id": node.get("id"),
         "name": node.get("name"),
         "type": node.get("type"),
+        "visible": node.get("visible"),
+        "characters": node.get("characters"),
         "layoutMode": node.get("layoutMode"),
         "itemSpacing": node.get("itemSpacing"),
         "paddingTop": node.get("paddingTop"),
         "paddingBottom": node.get("paddingBottom"),
         "paddingLeft": node.get("paddingLeft"),
         "paddingRight": node.get("paddingRight"),
+        "componentId": node.get("componentId"),
+        "x": bounds.get("x") if isinstance(bounds, dict) else None,
+        "y": bounds.get("y") if isinstance(bounds, dict) else None,
+        "width": bounds.get("width") if isinstance(bounds, dict) else None,
+        "height": bounds.get("height") if isinstance(bounds, dict) else None,
         "children": slim_children,
     }
 
@@ -180,6 +188,76 @@ def _collect_frame_metadata(
             if isinstance(child, dict):
                 frames.extend(_collect_frame_metadata(child, current_path, node_id))
     return frames
+
+
+def _search_figma_nodes(
+    node: dict,
+    query: str,
+    node_type: Optional[str] = None,
+    page_name: Optional[str] = None,
+    path: Optional[list[str]] = None,
+    parent_id: Optional[str] = None,
+    current_page_name: Optional[str] = None,
+) -> list[dict]:
+    if not isinstance(node, dict):
+        return []
+
+    current_name = node.get("name") or node.get("id") or "Unnamed"
+    current_path = (path or []) + [current_name]
+    resolved_page_name = current_page_name
+    if node.get("type") == "CANVAS":
+        resolved_page_name = node.get("name") or current_page_name
+
+    normalized_query = query.strip().lower()
+    normalized_node_type = (node_type or "").strip().upper()
+    normalized_page_name = (page_name or "").strip().lower()
+
+    haystacks = [
+        str(node.get("name") or "").lower(),
+        str(node.get("characters") or "").lower(),
+        str(node.get("id") or "").lower(),
+    ]
+    query_matches = any(normalized_query in haystack for haystack in haystacks if haystack)
+    type_matches = not normalized_node_type or str(node.get("type") or "").upper() == normalized_node_type
+    page_matches = not normalized_page_name or str(resolved_page_name or "").lower() == normalized_page_name
+
+    matches: list[dict] = []
+    bounds = node.get("absoluteBoundingBox")
+    if query_matches and type_matches and page_matches:
+        matches.append(
+            {
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "type": node.get("type"),
+                "pageName": resolved_page_name,
+                "path": " / ".join(current_path),
+                "parentId": parent_id,
+                "textPreview": (node.get("characters") or "")[:200] or None,
+                "componentId": node.get("componentId"),
+                "x": bounds.get("x") if isinstance(bounds, dict) else None,
+                "y": bounds.get("y") if isinstance(bounds, dict) else None,
+                "width": bounds.get("width") if isinstance(bounds, dict) else None,
+                "height": bounds.get("height") if isinstance(bounds, dict) else None,
+            }
+        )
+
+    children = node.get("children")
+    if isinstance(children, list):
+        node_id = node.get("id") if isinstance(node.get("id"), str) else parent_id
+        for child in children:
+            if isinstance(child, dict):
+                matches.extend(
+                    _search_figma_nodes(
+                        child,
+                        query=query,
+                        node_type=node_type,
+                        page_name=page_name,
+                        path=current_path,
+                        parent_id=node_id,
+                        current_page_name=resolved_page_name,
+                    )
+                )
+    return matches
 
 
 def _extract_frame_ids_from_frames(frames: list[dict]) -> list[str]:
@@ -358,6 +436,37 @@ async def get_frames(
         "depth": d,
         "totalFrames": len(frames),
         "frames": frames,
+    }
+
+
+async def search_file(
+    query: str,
+    file_key: Optional[str] = None,
+    node_type: Optional[str] = None,
+    page_name: Optional[str] = None,
+    limit: int = 25,
+) -> dict:
+    fk = _resolve_file_key(file_key)
+    file_data = await _figma_get(f"/files/{fk}")
+    if _is_figma_error_response(file_data):
+        return file_data
+
+    document = file_data.get("document")
+    matches = _search_figma_nodes(
+        document,
+        query=query,
+        node_type=node_type,
+        page_name=page_name,
+    ) if isinstance(document, dict) else []
+
+    return {
+        "name": file_data.get("name"),
+        "query": query,
+        "nodeType": node_type,
+        "pageName": page_name,
+        "totalMatches": len(matches),
+        "limit": limit,
+        "matches": matches[:limit],
     }
 
 
