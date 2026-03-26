@@ -957,11 +957,30 @@ Continue from inside the open <body> tag.
 {figma_content_note}
 {layout_section}
 
-TOKEN BUDGET RULES (follow strictly):
-- NO <style> blocks or custom CSS — Tailwind arbitrary values only
-- NO SVG — use 1-2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 etc.)
-- Short text only — 5-10 words per label, 1 sentence descriptions
-- MUST complete ALL {len(pages)} pages — fidelity to screenshots matters more than elaboration
+INTERACTIVITY RULES — these are mandatory, not optional:
+- Every clickable element (card, button, link, row) MUST have a working onclick handler.
+- NEVER leave onclick stubs like "// TODO" or functions that do nothing.
+- Multi-step flows (journeys, wizards, slideshows): implement real step state in JS.
+  Use a currentStep variable; prev/next buttons must actually advance/retreat through steps.
+- If cards lead to a detail view, the detail content must differ per card — use a JS data
+  array and a render function, NOT N copies of hardcoded HTML.
+- All navigation links in the nav must work (showPage or equivalent).
+- Test your logic mentally: clicking every button should produce a visible, meaningful result.
+
+JS DATA PATTERN — use this when cards or list items need individual content:
+  const ITEMS = [ {{id:0, title:'...', body:'...'}}, ... ];
+  function renderDetail(id) {{
+    const item = ITEMS[id];
+    document.getElementById('detail-title').textContent = item.title;
+    // ... populate other fields
+    showPage('detail');
+  }}
+
+TOKEN BUDGET RULES:
+- NO <style> blocks — Tailwind arbitrary values only (bg-[#hex], text-[#hex])
+- NO SVG — use 1-2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 ⭐ 🎯 📈)
+- Keep prose concise — 1 sentence descriptions, 5-10 word labels
+- MUST complete ALL {len(pages)} pages with working interactions
 
 Project: {plan.get("displayName", "Prototype")}
 Pages ({len(pages)}):
@@ -969,16 +988,17 @@ Pages ({len(pages)}):
 Content types: {ct_list}
 
 Write in this order:
-1. <nav class="bg-[{nav_bg}] border-b px-6 py-4 flex items-center justify-between">
-     Brand name left | one <button onclick="showPage(N)"> per page right
+1. <nav class="bg-[{nav_bg}] border-b px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+     Brand name left | navigation buttons right (each calls showPage or a named function)
    </nav>
-2. {len(pages)} sections — first visible, rest hidden:
-   <section id="p0" class="page p-8 max-w-5xl mx-auto"> ... </section>
-   <section id="p1" class="page hidden p-8 max-w-5xl mx-auto"> ... </section>
+2. One <div id="page-NAME" class="page"> per page — first gets class="page active", rest "page".
+   Use CSS: .page{{display:none}} .page.active{{display:flex;flex-direction:column}}
 3. </body>
 4. <script>
-     function showPage(n){{document.querySelectorAll('.page').forEach(e=>e.classList.add('hidden'));document.getElementById('p'+n).classList.remove('hidden');}}
-     document.addEventListener('DOMContentLoaded',()=>showPage(0));
+     // State variables for multi-step flows
+     function showPage(name){{document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));document.getElementById('page-'+name).classList.add('active');window.scrollTo(0,0);}}
+     // ... all other functions with REAL implementations (no stubs)
+     document.addEventListener('DOMContentLoaded',()=>showPage('{pages[0]["name"].lower().replace(" ","-") if pages else "home"}'));
    </script>
 5. </html>
 6. </FILE>

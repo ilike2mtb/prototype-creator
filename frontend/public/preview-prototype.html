@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HMP Collective Interactive Case Studies</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={theme:{extend:{colors:{brand:"#00A3E0",dark:"#1a1a1a",mid:"#252525",border:"#333333"},fontFamily:{sans:['Inter','system-ui','sans-serif']}}}}</script>
+  <style>
+    .page { display: none; }
+    .page.active { display: flex; flex-direction: column; min-height: calc(100vh - 64px); }
+    .step-dot { width:10px; height:10px; border-radius:50%; background:#333; transition:background .2s; }
+    .step-dot.active { background:#00A3E0; }
+    .card-hover { transition: border-color .2s, transform .15s; }
+    .card-hover:hover { border-color: #00A3E0; transform: translateY(-2px); }
+  </style>
+</head>
+<body class="font-sans bg-[#1a1a1a] text-white">
+
+<!-- ── NAV ─────────────────────────────────────────────────────────────── -->
+<nav class="h-16 bg-[#1a1a1a] border-b border-[#333] px-8 flex items-center justify-between sticky top-0 z-50">
+  <button onclick="goHome()" class="flex items-center gap-2 hover:opacity-80 transition-opacity">
+    <span class="text-white font-bold text-lg tracking-tight">HMP</span>
+    <span class="text-[#00A3E0] font-bold text-lg tracking-tight">COLLECTIVE</span>
+  </button>
+  <div class="flex items-center gap-1" id="breadcrumb"></div>
+  <button onclick="showPage('connect')" class="px-5 py-2 bg-[#00A3E0] text-white text-sm font-semibold rounded-lg hover:bg-[#0088c0] transition-colors">
+    Talk to Us
+  </button>
+</nav>
+
+<!-- ── PAGES ─────────────────────────────────────────────────────────────── -->
+
+<!-- HOME -->
+<div id="page-home" class="page active items-center justify-center bg-[#f0f0f0] text-[#1a1a1a] px-8 py-16">
+  <div class="max-w-3xl text-center">
+    <p class="text-sm font-semibold tracking-widest text-[#00A3E0] uppercase mb-6">Interactive Case Studies</p>
+    <h1 class="text-5xl font-light leading-tight mb-8">
+      See how organizations like yours<br>solved their toughest challenges
+    </h1>
+    <p class="text-xl text-[#555] mb-12 leading-relaxed">
+      Select your challenge below and walk through a real case study—problem, approach, and measurable results—before you ever fill out a form.
+    </p>
+    <button onclick="showPage('hub')" class="px-10 py-4 bg-[#00A3E0] text-white text-lg font-semibold rounded-xl hover:bg-[#0088c0] transition-colors shadow-lg">
+      Find Your Challenge →
+    </button>
+    <p class="text-sm text-[#999] mt-6">No form required · 4 challenge categories · 11 case studies</p>
+  </div>
+
+  <!-- Challenge preview tiles -->
+  <div class="grid grid-cols-4 gap-4 max-w-5xl mx-auto mt-20 w-full">
+    <div id="preview-0" onclick="selectChallenge(0)" class="p-5 bg-white rounded-xl border border-gray-200 card-hover cursor-pointer text-center">
+      <div class="text-3xl mb-3">🎯</div>
+      <div class="font-semibold text-sm text-[#1a1a1a]">Conference & Event Impact</div>
+    </div>
+    <div id="preview-1" onclick="selectChallenge(1)" class="p-5 bg-white rounded-xl border border-gray-200 card-hover cursor-pointer text-center">
+      <div class="text-3xl mb-3">📊</div>
+      <div class="font-semibold text-sm text-[#1a1a1a]">Data & Lead Quality</div>
+    </div>
+    <div id="preview-2" onclick="selectChallenge(2)" class="p-5 bg-white rounded-xl border border-gray-200 card-hover cursor-pointer text-center">
+      <div class="text-3xl mb-3">🤝</div>
+      <div class="font-semibold text-sm text-[#1a1a1a]">Stakeholder Engagement</div>
+    </div>
+    <div id="preview-3" onclick="selectChallenge(3)" class="p-5 bg-white rounded-xl border border-gray-200 card-hover cursor-pointer text-center">
+      <div class="text-3xl mb-3">📈</div>
+      <div class="font-semibold text-sm text-[#1a1a1a]">ROI & Attribution</div>
+    </div>
+  </div>
+</div>
+
+<!-- HUB: Challenge Selection -->
+<div id="page-hub" class="page flex-col px-8 py-12 max-w-6xl mx-auto w-full">
+  <div class="mb-10">
+    <h2 class="text-3xl font-bold mb-3">What challenge are you facing?</h2>
+    <p class="text-[#fff]/60 text-lg">Select the area that's most relevant to your organization.</p>
+  </div>
+  <div class="grid grid-cols-1 gap-4" id="challenge-grid"></div>
+</div>
+
+<!-- CASE STUDY LIST -->
+<div id="page-list" class="page flex-col px-8 py-12 max-w-6xl mx-auto w-full">
+  <button onclick="showPage('hub')" class="flex items-center gap-2 text-[#00A3E0] text-sm mb-8 hover:opacity-80 transition-opacity">
+    ← All Challenges
+  </button>
+  <div class="mb-10">
+    <div id="list-challenge-label" class="text-xs font-semibold tracking-widest uppercase text-[#00A3E0] mb-2"></div>
+    <h2 class="text-3xl font-bold mb-3" id="list-challenge-title"></h2>
+    <p class="text-[#fff]/60" id="list-challenge-desc"></p>
+  </div>
+  <div class="grid grid-cols-1 gap-4" id="case-study-list"></div>
+</div>
+
+<!-- JOURNEY: Step-through case study -->
+<div id="page-journey" class="page flex-col px-8 py-8 max-w-5xl mx-auto w-full">
+
+  <!-- Progress bar -->
+  <div class="flex items-center gap-3 mb-10">
+    <button onclick="showPage('list')" class="text-[#00A3E0] text-sm hover:opacity-80 transition-opacity mr-2">← Back</button>
+    <div class="flex gap-2" id="step-dots"></div>
+    <span class="text-[#fff]/40 text-sm ml-2" id="step-label"></span>
+  </div>
+
+  <!-- Step content (rendered by JS) -->
+  <div class="flex-1" id="journey-content"></div>
+
+  <!-- Step navigation -->
+  <div class="flex justify-between items-center pt-8 mt-8 border-t border-[#333]">
+    <button id="btn-prev" onclick="prevStep()" class="px-6 py-3 text-[#fff]/60 hover:text-white transition-colors text-sm">← Previous</button>
+    <button id="btn-next" onclick="nextStep()" class="px-6 py-3 bg-[#00A3E0] text-white rounded-lg hover:bg-[#0088c0] transition-colors text-sm font-medium">Next →</button>
+  </div>
+</div>
+
+<!-- CONNECT -->
+<div id="page-connect" class="page flex-col items-center justify-center px-8 py-12">
+  <div class="max-w-xl w-full">
+    <h2 class="text-4xl font-bold mb-3">Let's Create Your Success Story</h2>
+    <p class="text-[#fff]/60 text-lg mb-10">Share your challenge and we'll show you how HMP Collective can help.</p>
+
+    <div class="bg-[#252525] rounded-2xl border border-[#333] p-8 space-y-5">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">First Name</label>
+          <input type="text" placeholder="Jane" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#555] focus:outline-none focus:border-[#00A3E0]">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">Last Name</label>
+          <input type="text" placeholder="Smith" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#555] focus:outline-none focus:border-[#00A3E0]">
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">Work Email</label>
+        <input type="email" placeholder="jane@company.com" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#555] focus:outline-none focus:border-[#00A3E0]">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">Organization</label>
+        <input type="text" placeholder="Your company" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#555] focus:outline-none focus:border-[#00A3E0]">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">Biggest Challenge</label>
+        <select id="connect-challenge" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white focus:outline-none focus:border-[#00A3E0]">
+          <option value="">Select one…</option>
+          <option>Conference & Event Impact</option>
+          <option>Data & Lead Quality</option>
+          <option>Stakeholder Engagement</option>
+          <option>ROI & Attribution</option>
+          <option>Something else</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold uppercase tracking-wider mb-2 text-[#fff]/60">Tell us more</label>
+        <textarea rows="3" placeholder="Goals, timeline, upcoming events…" class="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333] rounded-lg text-white placeholder-[#555] focus:outline-none focus:border-[#00A3E0] resize-none"></textarea>
+      </div>
+      <button class="w-full py-4 bg-[#00A3E0] text-white font-semibold rounded-lg hover:bg-[#0088c0] transition-colors">
+        Send Message →
+      </button>
+      <p class="text-center text-xs text-[#fff]/40">Or email us directly at <a href="mailto:hello@hmpcollective.com" class="text-[#00A3E0]">hello@hmpcollective.com</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- ── DATA + STATE ─────────────────────────────────────────────────────────── -->
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────────
+const CHALLENGES = [
+  {
+    id: 0, emoji: '🎯',
+    title: 'Conference & Event Impact',
+    subtitle: 'Pharma · Biotech · MedTech',
+    count: 3,
+    desc: 'Stand out at crowded conferences and turn booth visits into memorable, measurable brand experiences.',
+  },
+  {
+    id: 1, emoji: '📊',
+    title: 'Data Collection & Lead Quality',
+    subtitle: 'Healthcare · Life Sciences',
+    count: 3,
+    desc: 'Capture meaningful attendee data while delivering value — and distinguish genuine prospects from passive foot traffic.',
+  },
+  {
+    id: 2, emoji: '🤝',
+    title: 'Stakeholder Engagement',
+    subtitle: 'Multi-industry',
+    count: 3,
+    desc: 'Create personalized experiences that resonate with diverse decision-makers across clinical, commercial, and c-suite audiences.',
+  },
+  {
+    id: 3, emoji: '📈',
+    title: 'ROI & Attribution',
+    subtitle: 'Enterprise · Agency',
+    count: 2,
+    desc: 'Prove the value of your event investments with clear measurement frameworks and executive-ready reporting.',
+  },
+];
+
+const CASE_STUDIES = {
+  0: [
+    {
+      title: 'Interactive Booth Experience for Global Oncology Conference',
+      client: 'Global Pharma Leader',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Breaking Through Booth Fatigue',
+          body: 'A leading pharmaceutical company's oncology team attended a major annual conference with 400+ competing exhibitors. Traditional banner displays and rep-driven conversations were failing to capture meaningful attention, and post-event survey data showed low recall rates among target HCPs.',
+          callout: { icon: '💡', title: 'Key Insight', text: 'Attendees averaged just 87 seconds at each booth. The brand needed an experience that could communicate complex clinical value quickly and memorably.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'A Self-Guided Clinical Journey',
+          body: 'HMP Collective designed a 3-screen interactive touchscreen system allowing HCPs to self-select their specialty and patient challenge, then walk through relevant clinical data in a narrative format. Content was modular and updated live based on the day's session topics.',
+          bullets: ['Specialty-based content routing', 'Live content updates between sessions', 'Rep-assisted and fully self-guided modes', 'Badge scan integration for instant lead capture'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '3.5×', label: 'Engagement vs. previous year' },
+            { val: '2,400+', label: 'Quality interactions' },
+            { val: '87%', label: 'Lead quality score' },
+            { val: '92%', label: 'HCP recall rate (post-event)' },
+          ],
+          quote: '"We\'ve never had conversations this substantive at a congress. HCPs were coming to us already informed."',
+          quoteAttrib: '— VP Medical Affairs',
+          cta: 'Sound familiar? Let\'s build yours.',
+        },
+      ],
+    },
+    {
+      title: 'Multi-Day Experiential Activation at ASHP',
+      client: 'Specialty Pharma Co.',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Standing Out at a Saturated Pharmacy Congress',
+          body: 'ASHP Midyear draws 25,000 pharmacy professionals to a hall packed with hundreds of similar-looking booths. Our client's product launched six months earlier and awareness among hospital pharmacists was lower than anticipated.',
+          callout: { icon: '🎯', title: 'The Objective', text: 'Drive 500+ qualified interactions and increase unaided brand awareness by 15 points among target pharmacists.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'A "Day in the Life" Simulation',
+          body: 'We created a fully immersive patient-case simulation that put pharmacists in a clinical decision-making scenario. Over 6 minutes, users worked through a real-world dispensing challenge, with the brand's product as the correct pathway.',
+          bullets: ['Gamified clinical scenario with branching logic', 'Real-time leaderboard to drive return visits', 'Personalized summary card emailed post-interaction', 'Seamless handoff to MSL for deeper conversations'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '714', label: 'Qualified interactions (43% over goal)' },
+            { val: '+22pts', label: 'Unaided brand awareness' },
+            { val: '4.2 min', label: 'Average dwell time' },
+            { val: '68%', label: 'Requested follow-up from MSL' },
+          ],
+          quote: '"Pharmacists were bringing colleagues over — we had a line. That\'s never happened to us before."',
+          quoteAttrib: '— Director of Commercial Strategy',
+          cta: 'Ready to create your own must-see booth?',
+        },
+      ],
+    },
+    {
+      title: 'Virtual Congress Experience During COVID-19',
+      client: 'Rare Disease Biotech',
+      industry: 'Biotechnology',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Recreating Human Connection in a Virtual Format',
+          body: 'When their flagship disease-area congress went virtual overnight in 2020, our client had 6 weeks to transform a $2M in-person activation into a digital experience. Attendance prediction, technical constraints, and HCP skepticism of virtual events all compounded the challenge.',
+          callout: { icon: '⚡', title: 'The Constraint', text: '6 weeks. $800K remaining budget. Zero playbook. The pressure to prove virtual ROI was enormous.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Digital-First, Human-Led Design',
+          body: 'HMP Collective built a branded microsite with async content (video cases, downloadable clinical summaries, interactive data explorer) anchored by live KOL fireside chats scheduled across three time zones. A smart scheduling tool matched HCPs with available MSLs.',
+          bullets: ['Branded virtual hub with 40+ content assets', 'Live fireside chats with 6 KOLs across time zones', 'MSL matching and 1:1 meeting scheduler', 'Real-time analytics dashboard for field teams'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '3,200+', label: 'Unique HCP attendees' },
+            { val: '9.4 min', label: 'Average session time' },
+            { val: '340', label: '1:1 MSL meetings booked' },
+            { val: '4×', label: 'Content downloads vs. in-person prior year' },
+          ],
+          quote: '"We expected virtual to be a loss. Instead we reached HCPs we\'d never met in person — including three who became advocates."',
+          quoteAttrib: '— Head of Medical Engagement',
+          cta: 'Virtual, in-person, or hybrid — we've done it all.',
+        },
+      ],
+    },
+  ],
+  1: [
+    {
+      title: 'Transforming Badge Scans into Qualified Pipeline',
+      client: 'MedTech Device Manufacturer',
+      industry: 'Medical Devices',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Thousands of Scans, Almost No Pipeline',
+          body: 'After a major orthopedic conference, the sales team received a list of 1,800 badge scans — but only 12% were even marginally qualified prospects. Sales reps spent weeks chasing leads that went nowhere, creating frustration and distrust in the event channel.',
+          callout: { icon: '❌', title: 'The Problem', text: 'No qualification layer existed between "they walked into our booth" and "they\'re in the CRM." Volume was mistaken for quality.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Progressive Profiling at Point of Engagement',
+          body: 'We redesigned the booth flow to build a 3-question progressive profile into every digital touchpoint: role, procedure volume, and purchasing timeline. Answers triggered different content journeys and automatically scored leads before they entered Salesforce.',
+          bullets: ['3-question qualifying survey embedded in kiosk flow', 'Automatic lead scoring (A/B/C) sent to CRM', 'Personalized follow-up email triggered within 2 hours', 'Rep dashboard showing each lead\'s engagement depth'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '61%', label: 'Qualified lead rate (vs. 12%)' },
+            { val: '5×', label: 'Pipeline value per show' },
+            { val: '2 hrs', label: 'Follow-up email delivery time' },
+            { val: '38%', label: 'Email open rate' },
+          ],
+          quote: '"My reps stopped complaining about event leads. That alone was worth the investment."',
+          quoteAttrib: '— VP Sales',
+          cta: 'Fix your lead quality problem.',
+        },
+      ],
+    },
+    {
+      title: 'Privacy-First Data Strategy for European Launch',
+      client: 'EU Pharma Brand',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Compliant Data Capture Under GDPR Pressure',
+          body: 'Launching a new product at ESMO under strict GDPR constraints, the team couldn\'t rely on standard lead capture methods. Legal review of the previous year\'s approach had flagged 8 compliance risks. The events team needed a compliant, still-effective data strategy.',
+          callout: { icon: '⚖️', title: 'The Constraint', text: 'Every data touchpoint required explicit consent, a clear value exchange, and full audit trail — with only 90-day post-congress data retention.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Value-First, Consent-Led Engagement',
+          body: 'HMP Collective designed a consent-forward experience where HCPs opted in by requesting personalized clinical summaries. Each request captured role, interest area, and explicit consent simultaneously, feeding directly into a GDPR-compliant data warehouse.',
+          bullets: ['Clinical summary "request" as primary CTA', 'Double opt-in flow with transparent data use statement', 'Role-tagged interest mapping to 14 content categories', 'Full audit trail and automated 90-day deletion workflow'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '0', label: 'Compliance violations' },
+            { val: '480+', label: 'Opted-in, enriched HCP profiles' },
+            { val: '71%', label: 'Consent rate (industry avg: 34%)' },
+            { val: '100%', label: 'Legal approval on first review' },
+          ],
+          quote: '"Legal actually praised the approach. They\'ve never said that before."',
+          quoteAttrib: '— Global Head of Digital Events',
+          cta: 'Build a data strategy your legal team will love.',
+        },
+      ],
+    },
+    {
+      title: 'Real-Time Audience Intelligence for Field Teams',
+      client: 'Immunology Brand',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Field Teams Flying Blind on Day 2',
+          body: 'MSLs and sales reps at a major immunology congress received the same generic briefing package every morning. They had no idea which HCPs had visited the booth, what content they engaged with, or how to personalize their outreach throughout the day.',
+          callout: { icon: '📡', title: 'The Gap', text: 'A 24-hour lag between booth engagement and field team notification meant warm leads were going cold overnight.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Live Engagement Dashboard for Field Teams',
+          body: 'We built a mobile field intelligence app that pushed real-time notifications to reps whenever a named HCP engaged with booth content. Each alert included engagement depth, content viewed, and a suggested conversation opener based on their specific journey.',
+          bullets: ['Real-time HCP engagement alerts on mobile', 'Suggested conversation starters by content path', 'Heat maps showing peak booth traffic windows', 'Nightly executive summary auto-generated for leadership'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '4 min', label: 'Avg. time from engagement to rep alert' },
+            { val: '52%', label: 'Same-day follow-up rate (vs. 8%)' },
+            { val: '3.1×', label: 'Conversion to scheduled meetings' },
+            { val: '94%', label: 'Field team adoption rate' },
+          ],
+          quote: '"I knew who to approach at dinner because I\'d seen exactly what they cared about. It changed every conversation I had."',
+          quoteAttrib: '— Senior MSL',
+          cta: 'Give your field teams real-time intelligence.',
+        },
+      ],
+    },
+  ],
+  2: [
+    {
+      title: 'C-Suite Engagement Program at JPMorgan Healthcare',
+      client: 'Large-Cap Biotech',
+      industry: 'Biotechnology',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Getting 20 Minutes with the Right Executives',
+          body: 'At JPMorgan Healthcare Conference, every biotech is competing for time with the same 200 institutional investors and strategic partners. Our client had strong science but a commodity booth presence — and was struggling to convert brief hallway introductions into substantive business conversations.',
+          callout: { icon: '🏆', title: 'The Goal', text: 'Secure 30 qualified executive meetings in 4 days. The previous year\'s result: 11.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Pre-Conference Intelligence + Curated Hospitality',
+          body: 'HMP Collective built a pre-conference outreach sequence combining a personalized digital insight report (tailored to each target\'s investment thesis) with an exclusive dinner invitation. The dinner format was structured to enable natural, deal-relevant conversation rather than pitch dynamics.',
+          bullets: ['Personalized 4-page insight report per target exec', 'Tailored outreach sequence starting 3 weeks pre-show', 'Exclusive hosted dinner for 18 curated attendees', 'Post-dinner follow-up with agreed next steps within 48 hrs'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '34', label: 'Executive meetings secured (vs. 11 prior year)' },
+            { val: '18', label: 'Dinner attendees, 100% target-qualified' },
+            { val: '3', label: 'Term sheets initiated within 90 days' },
+            { val: '209%', label: 'Increase in qualified meeting volume' },
+          ],
+          quote: '"The dinner was the best investment we made at the conference. Three of those conversations are now active deals."',
+          quoteAttrib: '— Chief Business Officer',
+          cta: 'Ready to make your next conference count?',
+        },
+      ],
+    },
+    {
+      title: 'HCP Education Program Across 12 Regional Markets',
+      client: 'Global Specialty Pharma',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'One Message, Twelve Cultures',
+          body: 'A post-approval education campaign needed to reach 8,000 neurologists across 12 EU markets within 6 months. Legal and regulatory review requirements varied by country, medical education norms differed dramatically, and the central team lacked bandwidth to manage 12 individual programs.',
+          callout: { icon: '🌍', title: 'The Scale', text: '12 markets, 5 languages, 8,000 target HCPs, 6 months, one central team. A coordination nightmare.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Modular Content with Local Activation',
+          body: 'We built a centrally governed content architecture with 40+ pre-approved content modules that local medical affairs teams could configure without triggering full re-review. Each market got a localized microsite, KOL-led webinar, and physical reference card.',
+          bullets: ['40 pre-cleared modular content blocks', 'Market-specific configuration tool for local teams', 'Localized KOL identification and briefing in each market', 'Central analytics dashboard across all 12 markets'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '9,200+', label: 'HCPs reached (15% over goal)' },
+            { val: '12/12', label: 'Markets activated on schedule' },
+            { val: '67%', label: 'Webinar attendance rate' },
+            { val: '40%', label: 'Reduction in per-market approval time' },
+          ],
+          quote: '"We\'ve never rolled out across Europe this fast. The modular system made it possible."',
+          quoteAttrib: '— VP Medical Affairs, EU',
+          cta: 'Scale your education programs without losing local relevance.',
+        },
+      ],
+    },
+    {
+      title: 'Payer & Formulary Access Engagement Strategy',
+      client: 'Launch-Stage Biotech',
+      industry: 'Biotechnology',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Breaking into Formulary Before the Competition',
+          body: 'A newly approved oral therapy faced an 18-month window before a competing product launch. The market access team needed to educate formulary decision-makers quickly — but traditional slide-deck presentations were being ignored by P&T committee members who had already formed opinions.',
+          callout: { icon: '⏱️', title: 'The Window', text: '18 months to establish formulary position before a well-funded competitor entered the same space.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Evidence-Led, Interactive Value Dossier',
+          body: 'HMP Collective developed a digital value communication tool — an interactive outcomes model that let P&T committee members input their own patient population data and see projected budget impact, clinical outcomes, and quality-of-life improvements in real time.',
+          bullets: ['Interactive budget impact model with custom inputs', 'P&T-tailored evidence summaries by stakeholder type', 'In-person facilitated sessions with live scenario modeling', 'Leave-behind: printed and digital executive summary'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '14 of 15', label: 'Target formularies achieved in Year 1' },
+            { val: '6.2 mo', label: 'Avg. time to formulary decision (industry avg: 11 mo)' },
+            { val: '100%', label: 'Preferred tier placement in 11 formularies' },
+            { val: '$280M', label: 'Year-1 revenue in covered lives' },
+          ],
+          quote: '"The interactive model changed the conversation entirely. They stopped debating our data and started planning implementation."',
+          quoteAttrib: '— Head of Market Access',
+          cta: 'Build your market access story.',
+        },
+      ],
+    },
+  ],
+  3: [
+    {
+      title: 'Unified Event ROI Framework Across 40 Annual Shows',
+      client: 'Global Pharma Company',
+      industry: 'Pharmaceutical',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'No Consistent Way to Measure Event Value',
+          body: 'With 40+ annual conference investments and a $22M events budget, the leadership team had no unified way to compare performance across shows, justify spend to the CFO, or make data-driven decisions about which events to grow, maintain, or cut.',
+          callout: { icon: '📉', title: 'The Problem', text: 'Every show was measured differently. Some used badge scans, some used rep reports, some used nothing. Comparison was impossible.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Custom ROI Measurement Architecture',
+          body: 'HMP Collective designed a standardized measurement framework with five KPI categories (Reach, Engagement, Lead Quality, Pipeline Influence, Brand Lift), a weighted scoring model calibrated to business priority, and a quarterly analytics review cadence with leadership.',
+          bullets: ['5-category KPI framework applied across all 40 shows', 'Custom weighting by show type (congress vs. advisory vs. experiential)', 'Unified data ingestion from 6 existing systems', 'Executive-ready quarterly and annual summary reports'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '40', label: 'Shows on unified framework within 6 months' },
+            { val: '$4.2M', label: 'Events budget reallocated to higher-ROI shows' },
+            { val: '3', label: 'Low-performing shows cut based on data' },
+            { val: '22%', label: 'Increase in average show ROI year-over-year' },
+          ],
+          quote: '"For the first time I can walk into a budget meeting and defend every dollar. That\'s changed how leadership views the events team."',
+          quoteAttrib: '— VP Events & Congresses',
+          cta: 'Build a measurement framework that earns respect.',
+        },
+      ],
+    },
+    {
+      title: 'Proving Event Attribution to Sales Leadership',
+      client: 'Commercial-Stage Biotech',
+      industry: 'Biotechnology',
+      steps: [
+        {
+          label: 'The Challenge',
+          heading: 'Events Team Under Threat of Budget Cut',
+          body: 'After a flat revenue year, the CFO put the $8M events budget on notice — requiring the events team to demonstrate clear, causal revenue contribution within 90 days or face a 40% cut. The problem: no attribution model existed and CRM data was fragmented across three systems.',
+          callout: { icon: '🚨', title: 'The Stakes', text: '90 days to prove $8M in event spend was worth it — or lose 40% of the budget. The events team needed a defensible attribution story fast.' },
+        },
+        {
+          label: 'Our Approach',
+          heading: 'Rapid Attribution Audit + Storytelling Framework',
+          body: 'In week one we audited CRM, conference lead lists, and closed-won opportunities from the past 24 months, mapping event touchpoints to deals. We built a multi-touch attribution model that credited events appropriately alongside other channels, then designed a CFO-ready narrative deck.',
+          bullets: ['24-month CRM and lead list retrospective analysis', 'Multi-touch attribution model across 7 channels', 'Event influence mapped to $64M in closed-won deals', 'CFO-ready narrative with conservative and aggressive scenarios'],
+        },
+        {
+          label: 'Results',
+          stats: [
+            { val: '$64M', label: 'Revenue influenced by events (identified)' },
+            { val: '8×', label: 'Demonstrated ROI on events investment' },
+            { val: '0%', label: 'Budget cut (full budget retained)' },
+            { val: '+$1.5M', label: 'Budget increase for following year' },
+          ],
+          quote: '"They came in to defend the budget and left with a raise. I\'ve never seen the CFO flip that fast."',
+          quoteAttrib: '— Chief Commercial Officer',
+          cta: 'Prove the value of your events investment.',
+        },
+      ],
+    },
+  ],
+};
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let currentChallenge = 0;
+let currentCaseStudy = 0;
+let currentStep = 0;
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const el = document.getElementById('page-' + name);
+  if (el) el.classList.add('active');
+  updateBreadcrumb(name);
+  window.scrollTo(0, 0);
+}
+
+function goHome() { showPage('home'); }
+
+function updateBreadcrumb(page) {
+  const bc = document.getElementById('breadcrumb');
+  if (page === 'home') { bc.innerHTML = ''; return; }
+  const ch = CHALLENGES[currentChallenge];
+  const cs = CASE_STUDIES[currentChallenge]?.[currentCaseStudy];
+  let parts = [];
+  if (page === 'hub') parts = ['Challenges'];
+  if (page === 'list') parts = ['Challenges', ch?.title];
+  if (page === 'journey') parts = ['Challenges', ch?.title, cs?.title];
+  if (page === 'connect') parts = ['Connect'];
+  bc.innerHTML = parts.map((p, i) => {
+    const isLast = i === parts.length - 1;
+    return `<span class="text-xs ${isLast ? 'text-white/60' : 'text-[#00A3E0] cursor-pointer hover:underline'}">${p}</span>` +
+      (isLast ? '' : `<span class="text-white/30 text-xs mx-2">›</span>`);
+  }).join('');
+}
+
+// ── Challenge Hub ─────────────────────────────────────────────────────────────
+function selectChallenge(id) {
+  currentChallenge = id;
+  showPage('list');
+  renderCaseStudyList();
+}
+
+function renderHub() {
+  const grid = document.getElementById('challenge-grid');
+  grid.innerHTML = CHALLENGES.map((c, i) => `
+    <div onclick="selectChallenge(${i})" class="p-7 bg-[#252525] rounded-2xl border border-[#333] card-hover cursor-pointer">
+      <div class="flex items-start justify-between">
+        <div class="flex-1">
+          <div class="flex items-center gap-4 mb-3">
+            <span class="text-4xl">${c.emoji}</span>
+            <div>
+              <h3 class="text-xl font-bold">${c.title}</h3>
+              <p class="text-xs text-[#00A3E0] mt-0.5">${c.subtitle}</p>
+            </div>
+          </div>
+          <p class="text-white/60 mb-4 leading-relaxed">${c.desc}</p>
+          <span class="inline-block px-3 py-1 bg-white/10 text-white/60 text-xs rounded-full">${c.count} case studies</span>
+        </div>
+        <span class="text-2xl text-[#00A3E0] ml-6 mt-1">›</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Case Study List ───────────────────────────────────────────────────────────
+function renderCaseStudyList() {
+  const ch = CHALLENGES[currentChallenge];
+  document.getElementById('list-challenge-label').textContent = 'Challenge';
+  document.getElementById('list-challenge-title').textContent = ch.title;
+  document.getElementById('list-challenge-desc').textContent = ch.desc;
+
+  const studies = CASE_STUDIES[currentChallenge] || [];
+  const list = document.getElementById('case-study-list');
+  list.innerHTML = studies.map((s, i) => `
+    <div onclick="selectCaseStudy(${i})" class="p-6 bg-[#252525] rounded-xl border border-[#333] card-hover cursor-pointer">
+      <div class="flex items-start justify-between">
+        <div class="flex-1">
+          <span class="inline-block px-2 py-0.5 bg-[#00A3E0]/20 text-[#00A3E0] text-xs rounded mb-3">${s.industry}</span>
+          <h3 class="text-xl font-semibold mb-2">${s.title}</h3>
+          <p class="text-white/50 text-sm">${s.client}</p>
+        </div>
+        <div class="flex flex-col items-end gap-2 ml-6 shrink-0">
+          <span class="text-[#00A3E0] text-2xl">›</span>
+          <span class="text-xs text-white/40">3-step story</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Journey ───────────────────────────────────────────────────────────────────
+function selectCaseStudy(id) {
+  currentCaseStudy = id;
+  currentStep = 0;
+  showPage('journey');
+  renderJourney();
+}
+
+function nextStep() {
+  const steps = CASE_STUDIES[currentChallenge][currentCaseStudy].steps;
+  if (currentStep < steps.length - 1) {
+    currentStep++;
+    renderJourney();
+  } else {
+    showPage('connect');
+    // Pre-fill challenge in connect form
+    const sel = document.getElementById('connect-challenge');
+    if (sel) sel.value = CHALLENGES[currentChallenge].title;
+  }
+}
+
+function prevStep() {
+  if (currentStep > 0) {
+    currentStep--;
+    renderJourney();
+  } else {
+    showPage('list');
+  }
+}
+
+function renderJourney() {
+  const cs = CASE_STUDIES[currentChallenge][currentCaseStudy];
+  const steps = cs.steps;
+  const step = steps[currentStep];
+  const isLast = currentStep === steps.length - 1;
+
+  // Step dots
+  document.getElementById('step-dots').innerHTML = steps.map((s, i) =>
+    `<div class="step-dot ${i === currentStep ? 'active' : ''}" title="${s.label}"></div>`
+  ).join('');
+  document.getElementById('step-label').textContent = `${step.label} · ${currentStep + 1} of ${steps.length}`;
+
+  // Prev / next buttons
+  document.getElementById('btn-prev').textContent = currentStep === 0 ? '← Back to list' : '← ' + steps[currentStep - 1].label;
+  document.getElementById('btn-next').textContent = isLast ? 'Talk to Us →' : 'Next: ' + steps[currentStep + 1].label + ' →';
+  document.getElementById('btn-next').className = `px-6 py-3 rounded-lg transition-colors text-sm font-medium ${
+    isLast ? 'bg-[#00A3E0] text-white hover:bg-[#0088c0]' : 'bg-[#252525] border border-[#00A3E0] text-[#00A3E0] hover:bg-[#00A3E0]/10'
+  }`;
+
+  // Content
+  let html = `
+    <span class="inline-block px-3 py-1 bg-[#00A3E0]/20 text-[#00A3E0] text-xs font-semibold rounded-full mb-5">${step.label}</span>
+    <h2 class="text-3xl font-bold mb-6">${step.heading}</h2>
+  `;
+
+  if (step.body) {
+    html += `<p class="text-white/70 text-lg leading-relaxed mb-8 max-w-3xl">${step.body}</p>`;
+  }
+
+  if (step.callout) {
+    html += `
+      <div class="p-6 bg-[#252525] rounded-xl border border-[#333] flex items-start gap-4 mb-8 max-w-3xl">
+        <span class="text-3xl">${step.callout.icon}</span>
+        <div><h4 class="font-semibold mb-1">${step.callout.title}</h4>
+        <p class="text-white/60 text-sm leading-relaxed">${step.callout.text}</p></div>
+      </div>`;
+  }
+
+  if (step.bullets) {
+    html += `<ul class="space-y-3 mb-8 max-w-2xl">` +
+      step.bullets.map(b => `
+        <li class="flex items-start gap-3">
+          <span class="text-[#00A3E0] mt-1 text-sm">✓</span>
+          <span class="text-white/70">${b}</span>
+        </li>`).join('') +
+      `</ul>`;
+  }
+
+  if (step.stats) {
+    html += `<div class="grid grid-cols-2 gap-4 mb-8 max-w-3xl">` +
+      step.stats.map(s => `
+        <div class="p-6 bg-[#252525] rounded-xl border border-[#333] text-center">
+          <div class="text-4xl font-bold text-[#00A3E0] mb-2">${s.val}</div>
+          <div class="text-sm text-white/60">${s.label}</div>
+        </div>`).join('') +
+      `</div>`;
+  }
+
+  if (step.quote) {
+    html += `
+      <blockquote class="border-l-4 border-[#00A3E0] pl-6 mb-8 max-w-2xl">
+        <p class="text-lg text-white/80 italic mb-2">${step.quote}</p>
+        <cite class="text-sm text-white/40 not-italic">${step.quoteAttrib}</cite>
+      </blockquote>`;
+  }
+
+  if (step.cta && isLast) {
+    html += `
+      <div class="p-6 bg-gradient-to-r from-[#00A3E0]/20 to-[#0066B3]/10 rounded-xl border border-[#00A3E0]/30 max-w-3xl">
+        <p class="font-semibold text-lg mb-1">${step.cta}</p>
+        <p class="text-white/50 text-sm">Click "Talk to Us" below to get started.</p>
+      </div>`;
+  }
+
+  document.getElementById('journey-content').innerHTML = html;
+  window.scrollTo(0, 0);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  renderHub();
+  showPage('home');
+});
+</script>
+
+</body>
+</html>
