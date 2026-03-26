@@ -783,21 +783,40 @@ file content here
 Make views clean and professional. Use CSS variables from design tokens."""
 
 
-def _extract_frame_ids(figma_data: dict, max_frames: int = 3) -> list:
-    """Walk the Figma node tree and return the first N FRAME node IDs."""
-    ids: list = []
+def _extract_frame_ids(figma_data: dict, max_frames: int = 5) -> list:
+    """Walk the Figma node tree and return the first N FRAME node IDs.
 
-    def walk(node):
-        if len(ids) >= max_frames:
+    Handles both cases:
+    - Node IDs that ARE frames → collected immediately.
+    - Node IDs that are pages (CANVAS) → walks one level of children to find
+      the top-level frames on that page.
+    Children of those frames are NOT recursed into (we want page-level frames,
+    not every nested sub-frame).
+    """
+    ids: list = []
+    seen: set = set()
+
+    def collect(node_id: str):
+        if node_id and node_id not in seen and len(ids) < max_frames:
+            seen.add(node_id)
+            ids.append(node_id)
+
+    def walk(node, depth: int = 0):
+        if not isinstance(node, dict) or len(ids) >= max_frames:
             return
-        if isinstance(node, dict):
-            if node.get("type") == "FRAME":
-                ids.append(node["id"])
+        ntype = node.get("type")
+        nid   = node.get("id")
+        if ntype == "FRAME":
+            collect(nid)
+            return   # don't recurse into sub-frames — we want page-level only
+        # For CANVAS (page) nodes or the root document, walk one level of children
+        if depth < 2:
             for child in node.get("children") or []:
-                walk(child)
+                walk(child, depth + 1)
 
     for node_info in (figma_data.get("nodes") or {}).values():
-        walk(node_info)
+        if isinstance(node_info, dict):
+            walk(node_info)
 
     return ids
 
@@ -812,7 +831,7 @@ async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> tuple:
     Returns ([], {}) on any error so callers can degrade gracefully.
     """
     try:
-        frame_ids = _extract_frame_ids(figma_data, max_frames=3)
+        frame_ids = _extract_frame_ids(figma_data, max_frames=5)
         if not frame_ids:
             return [], {}
 
@@ -851,8 +870,9 @@ def _html_system(plan: dict, has_figma_content: bool = False,
     Used together with an assistant-prefill message (see run_chat Phase 4),
     so the model always continues from inside an already-open <body> — making
     it structurally impossible to write a <style> block first.
-    When has_figma_content=True, Figma node data is present in the user message
-    and the model should use that real content instead of inventing placeholders.
+    When has_figma_content=True, Figma node data is present in the user message.
+    When has_figma_images=True, Figma screenshots are in the user message — the
+    generic layout guide is suppressed entirely; screenshots ARE the layout spec.
     """
     tokens        = plan.get("designTokens", {})
     pages         = plan.get("pages", [])[:5]   # hard cap — token budget supports max 5 pages
@@ -863,64 +883,93 @@ def _html_system(plan: dict, has_figma_content: bool = False,
     )
     ct_list = ", ".join(ct["name"] for ct in content_types)
 
-    figma_content_note = (
-        "\n⭐ FIGMA DATA: Real design content is in the user message. "
-        "Extract actual text labels, component names, titles, and descriptions from it. "
-        "Use that real content to populate cards and headings — do NOT invent placeholder text when Figma provides it."
-    ) if has_figma_content else ""
-
-    figma_style_note = (
-        "\n🎨 FIGMA SCREENSHOTS INCLUDED — follow these rules strictly:\n"
-        "1. COLORS: Identify the EXACT hex colors in the screenshots.\n"
-        "   - Do NOT use generic Tailwind color names (blue-600, violet-500, gray-800).\n"
-        "   - Use ONLY Tailwind arbitrary-value hex: bg-[#hex], text-[#hex], border-[#hex].\n"
-        "   - Apply the brand color (most prominent non-white/black) to card headers, buttons, accents.\n"
-        "   - Apply the background color to sections and the nav.\n"
-        "2. LAYOUT: Study the screenshot layout and replicate it — do NOT default to 'heading + 4 cards'.\n"
-        "   - If Figma shows large touch-target cards with brand-colored headers, build those.\n"
-        "   - If Figma shows a hero with large text + CTA, build that instead of a card grid.\n"
-        "   - Each page should have a DIFFERENT layout matching its purpose.\n"
-        "3. NAV: Match the exact nav background color from the screenshot.\n"
-        "4. DO NOT embed any <img> tags showing the Figma screenshots — build the HTML equivalent instead."
-    ) if has_figma_images else ""
-
-    # Determine brand color for card headers (from plan tokens, or a safe fallback)
-    tokens     = plan.get("designTokens", {})
-    brand_hex  = tokens.get("primaryColor",   "#6366f1")
-    accent_hex = tokens.get("secondaryColor", "#8b5cf6")
+    # Determine brand colors (from plan tokens, or safe fallbacks)
+    brand_hex  = tokens.get("primaryColor",    "#6366f1")
+    accent_hex = tokens.get("secondaryColor",  "#8b5cf6")
     bg_hex     = tokens.get("backgroundColor", "#ffffff")
     fg_hex     = tokens.get("textColor",       "#1f2937")
+    nav_bg     = bg_hex if bg_hex != "#ffffff" else "#f8f8f8"
+
+    figma_content_note = (
+        "\n⭐ FIGMA TEXT DATA: Real design content is in the user message. "
+        "Extract actual labels, titles, and descriptions from it — do NOT invent placeholder text."
+    ) if has_figma_content else ""
+
+    if has_figma_images:
+        # Screenshots present — they ARE the layout specification.
+        # Suppress generic layout guide entirely; Claude must derive layout from images.
+        layout_section = (
+            "━━━ FIGMA SCREENSHOTS ARE THE LAYOUT SPEC ━━━\n"
+            "You have been given actual Figma design screenshots. Your ONLY job is to faithfully\n"
+            "reproduce what you see in those screenshots as HTML/Tailwind. Rules:\n"
+            "\n"
+            "1. LAYOUT — replicate it exactly:\n"
+            "   - Study each screenshot's structure: hero, grid, list, timeline, stat blocks, etc.\n"
+            "   - NEVER default to a generic '2×2 card grid' if the screenshot shows something else.\n"
+            "   - If a page shows a full-width hero with large type + CTA button, build that.\n"
+            "   - If a page shows a numbered timeline or step-by-step story, build that.\n"
+            "   - If a page shows large stat numbers, build those.\n"
+            "   - Each page MUST have the layout shown in its corresponding screenshot.\n"
+            "\n"
+            "2. COLORS — pick exact values from the screenshots:\n"
+            "   - Identify every distinct color visible: nav background, card headers, body bg, text, accents.\n"
+            "   - Use ONLY Tailwind arbitrary-value hex: bg-[#rrggbb], text-[#rrggbb], border-[#rrggbb].\n"
+            "   - NEVER use named Tailwind colors (blue-600, violet-500, gray-800, etc.).\n"
+            "   - Fallback tokens from the design system: brand={brand_hex}, accent={accent_hex},\n"
+            f"     bg={bg_hex}, text={fg_hex} — use these when a color in a screenshot is ambiguous.\n"
+            "\n"
+            "3. TYPOGRAPHY — match weight, size, and spacing:\n"
+            "   - Large display headings → text-4xl font-light or font-bold as shown.\n"
+            "   - Card titles → font-semibold text-lg or text-xl.\n"
+            "   - Body copy → text-sm or text-base text-[#hex]/70.\n"
+            "\n"
+            "4. NAV — match the exact header shown: brand name position, nav link style, background color.\n"
+            "\n"
+            "5. DO NOT embed <img> tags of the screenshots — build the HTML/CSS equivalent."
+        )
+    else:
+        # No screenshots — use prescriptive layout guide as fallback
+        layout_section = (
+            f"COLORS — use these exact values (do not substitute):\n"
+            f"  Brand/primary: {brand_hex}    Accent/secondary: {accent_hex}\n"
+            f"  Background: {bg_hex}          Text: {fg_hex}\n"
+            f"  Use bg-[{brand_hex}] not bg-primary (Tailwind JIT may not resolve custom tokens).\n"
+            "\n"
+            "LAYOUT GUIDE per page type:\n"
+            "- Home/Landing: Large centred heading + 2×2 grid of large touch-target cards (h-40) with brand-colored tops\n"
+            "- Listing/Challenges: Full-width clickable rows OR 2-col card grid with colored header bands\n"
+            "- Detail/Case study: Vertical story steps (numbered timeline) OR 3-col feature cards\n"
+            "- Results/Metrics: Large bold stat numbers in coloured circles + CTA button\n"
+            "- Directory/All: Filter pills row + 2-col card grid\n"
+            "\n"
+            f"Card template:\n"
+            f'<div class="rounded-2xl overflow-hidden shadow-lg border border-[{fg_hex}]/10">\n'
+            f'  <div class="h-28 bg-[{brand_hex}] flex items-center px-6">\n'
+            f'    <span class="text-3xl mr-3">📄</span>\n'
+            f'    <h3 class="font-semibold text-white text-lg leading-tight">Card Title</h3>\n'
+            f'  </div>\n'
+            f'  <div class="p-5 bg-white text-[{fg_hex}]/70 text-sm">Brief description.</div>\n'
+            f'</div>'
+        )
 
     return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is pre-written. \
 Continue from inside the open <body> tag.
-{figma_content_note}{figma_style_note}
+{figma_content_note}
+{layout_section}
+
 TOKEN BUDGET RULES (follow strictly):
 - NO <style> blocks or custom CSS — Tailwind arbitrary values only
 - NO SVG — use 1-2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 etc.)
 - Short text only — 5-10 words per label, 1 sentence descriptions
-- Max 4 cards per section
-- MUST complete ALL {len(pages)} pages — speed matters more than elaboration
-
-COLORS — use these exact values from the design tokens (do not substitute):
-  Brand/primary: {brand_hex}    Accent/secondary: {accent_hex}
-  Background: {bg_hex}          Text: {fg_hex}
-  Apply brand color to: card header bands, active nav, primary buttons, key numbers.
-  Use bg-[{brand_hex}] not bg-primary (Tailwind JIT may not resolve custom tokens).
+- MUST complete ALL {len(pages)} pages — fidelity to screenshots matters more than elaboration
 
 Project: {plan.get("displayName", "Prototype")}
-Pages ({len(pages)}) — give EACH page a DIFFERENT layout:
+Pages ({len(pages)}):
 {page_list}
 Content types: {ct_list}
 
-LAYOUT GUIDE per page type:
-- Home/Landing: Large centred heading + 2×2 grid of large touch-target cards (h-40) with brand-colored tops
-- Listing/Challenges: Full-width clickable rows OR 2-col card grid with colored header bands
-- Detail/Case study: Vertical story steps (numbered timeline) OR 3-col feature cards
-- Results/Metrics: Large bold stat numbers in coloured circles + CTA button
-- Directory/All: Filter pills row + 2-col card grid
-
 Write in this order:
-1. <nav class="bg-[{bg_hex if bg_hex != '#ffffff' else '#f8f8f8'}] border-b px-6 py-4 flex items-center justify-between">
+1. <nav class="bg-[{nav_bg}] border-b px-6 py-4 flex items-center justify-between">
      Brand name left | one <button onclick="showPage(N)"> per page right
    </nav>
 2. {len(pages)} sections — first visible, rest hidden:
@@ -933,15 +982,6 @@ Write in this order:
    </script>
 5. </html>
 6. </FILE>
-
-Card template with EXACT brand colors (use this pattern):
-<div class="rounded-2xl overflow-hidden shadow-lg border border-[{fg_hex}]/10">
-  <div class="h-28 bg-[{brand_hex}] flex items-center px-6">
-    <span class="text-3xl mr-3">📄</span>
-    <h3 class="font-semibold text-white text-lg leading-tight">Card Title</h3>
-  </div>
-  <div class="p-5 bg-white text-[{fg_hex}]/70 text-sm">Brief description.</div>
-</div>
 
 End your output with </FILE>."""
 
@@ -1231,10 +1271,15 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
             user_content.append({
                 "type": "text",
                 "text": (
-                    "The following screenshots are the actual Figma design frames. "
-                    "Analyse them carefully and match their visual style "
-                    "(background color, text color, card style, nav style, typography) "
-                    "in the HTML you generate."
+                    "The following screenshots are the actual Figma design frames for this project. "
+                    "Your primary job is to REPLICATE these layouts in HTML/Tailwind — not to invent "
+                    "generic layouts. For each screenshot:\n"
+                    "• Identify the exact layout pattern (hero, grid, timeline, stat blocks, list, etc.)\n"
+                    "• Extract the exact colors visible (nav background, card fill, body bg, text, accents)\n"
+                    "• Note the typography scale (display, heading, body sizes)\n"
+                    "• Note component patterns (card shape, button style, icon treatment)\n"
+                    "Each page in the HTML must visually match its corresponding screenshot. "
+                    "Do NOT default to a generic card grid if the screenshot shows something different."
                 ),
             })
             for b64 in figma_images:
