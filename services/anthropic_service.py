@@ -1,5 +1,6 @@
 import anthropic, asyncio, base64, json, logging, re
 import httpx as _httpx
+from collections import Counter
 from config import settings
 from services.integrations import (
     get_frames, get_nodes, export_images,
@@ -14,10 +15,10 @@ client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 MODEL            = "claude-sonnet-4-5"
 MAX_TOKENS       = 3500   # default per-call limit — stays under the 4 000 token/min rate cap
-HTML_MAX_TOKENS  = 8000   # HTML phase gets full budget; with prefill no CSS is wasted
+HTML_MAX_TOKENS  = 16000  # HTML phase: enough for data-layer + full CSS system + all pages
 MAX_TOOL_CHARS   = 4000
 PHASE_DELAY      = 65     # seconds between phases — lets the 4 000/min token bucket reset
-HTML_PHASE_DELAY = 130    # longer wait before HTML phase to refill token bucket fully
+HTML_PHASE_DELAY = 160    # longer wait before HTML phase to refill token bucket fully
 RATE_LIMIT_WAIT  = 65     # seconds to wait on a 429 before retrying
 
 
@@ -821,17 +822,324 @@ def _extract_frame_ids(figma_data: dict, max_frames: int = 5) -> list:
     return ids
 
 
-async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> tuple:
-    """Export the first few Figma frames as PNG.
+# ── Figma structure analysis ───────────────────────────────────────────────────
+
+def _find_container_id(frames: list, provided_ids: str) -> str:
+    """Return the most common parentId in the frames list (the container frame).
+
+    Falls back to the first provided ID if no clear container is found.
+    """
+    if not frames:
+        return (provided_ids or "").split(",")[0].strip()
+    parent_counts: Counter = Counter(
+        f.get("parentId") for f in frames if f.get("parentId")
+    )
+    if not parent_counts:
+        return (provided_ids or "").split(",")[0].strip()
+    best, count = parent_counts.most_common(1)[0]
+    # Only treat as container if it owns at least 3 direct children
+    return best if count >= 3 else (provided_ids or "").split(",")[0].strip()
+
+
+def _group_screens_by_pattern(screens: list) -> list:
+    """Bucket frames into splash_menu, hub, and case_series groups.
+
+    Naming convention detected:
+      - "Homepage", "Home", "Splash", etc.  → splash_menu
+      - "X N" where N is an integer          → case_series keyed on base name X
+      - Everything else                       → hub (individual category page)
+    """
+    _SPLASH_KWS = {"homepage", "home", "splash", "intro", "start", "welcome", "landing"}
+    _NUMBERED   = re.compile(r"^(.+?)\s+(\d+)$")
+
+    numbered: dict  = {}   # base_name → [screen_dict, ...]
+    unnumbered: list = []
+
+    for s in screens:
+        name = s.get("name", "")
+        m = _NUMBERED.match(name)
+        if m:
+            base = m.group(1).strip()
+            numbered.setdefault(base, []).append({**s, "_slide_num": int(m.group(2))})
+        else:
+            unnumbered.append(s)
+
+    groups: list = []
+
+    splash = [s for s in unnumbered
+              if any(kw in s.get("name", "").lower() for kw in _SPLASH_KWS)]
+    hubs   = [s for s in unnumbered if s not in splash]
+
+    if splash:
+        groups.append({"type": "splash_menu", "name": "Entry", "screens": splash})
+
+    for s in hubs:
+        groups.append({"type": "hub", "name": s.get("name", ""), "screens": [s]})
+
+    for base, series in sorted(numbered.items()):
+        series.sort(key=lambda x: x["_slide_num"])
+        groups.append({"type": "case_series", "name": base, "screens": series})
+
+    return groups
+
+
+def _extract_all_texts(node: dict) -> list:
+    """Recursively collect every TEXT node's characters from a Figma node tree."""
+    results: list = []
+    if not isinstance(node, dict):
+        return results
+    if node.get("type") == "TEXT":
+        chars = (node.get("characters") or "").strip()
+        if len(chars) > 2:
+            results.append(chars)
+    for child in (node.get("children") or []):
+        results.extend(_extract_all_texts(child))
+    return results
+
+
+def _select_representative_frames(groups: list) -> list:
+    """Pick 5–8 frame IDs that cover the full visual language of the design.
+
+    Strategy:
+      • Splash/menu: up to 2 (prefer the richer/last screen)
+      • Hub: 1 representative
+      • Case series: slides 1, 2, 3 from the first series (challenge / plan / win)
+      • Optionally: slide 1 from a second series
+    """
+    ids: list = []
+
+    sm = [g for g in groups if g["type"] == "splash_menu"]
+    if sm:
+        screens = sm[0]["screens"]
+        for s in screens[-2:]:          # last 2 (or 1) — the menu screen is last
+            ids.append(s["id"])
+
+    hubs = [g for g in groups if g["type"] == "hub"]
+    if hubs:
+        ids.append(hubs[0]["screens"][0]["id"])
+
+    series = [g for g in groups if g["type"] == "case_series"]
+    if series:
+        for s in series[0]["screens"][:3]:   # challenge / plan / win
+            ids.append(s["id"])
+        if len(series) > 1 and len(ids) < 7:
+            ids.append(series[1]["screens"][0]["id"])
+
+    return ids[:8]
+
+
+def _build_nav_graph(groups: list) -> dict:
+    """Return {screen_name: [child_screen_names]} for the navigation commentary."""
+    graph: dict = {}
+
+    splash_names = [s.get("name", "")
+                    for g in groups if g["type"] == "splash_menu"
+                    for s in g["screens"]]
+    hub_names    = [g["name"] for g in groups if g["type"] == "hub"]
+
+    for n in splash_names:
+        graph[n] = hub_names
+
+    series_by_name = {g["name"]: [s.get("name", "") for s in g["screens"]]
+                      for g in groups if g["type"] == "case_series"}
+
+    for g in groups:
+        if g["type"] == "hub":
+            hub_n  = g["name"]
+            related = [
+                series_screens[0]
+                for series_name, series_screens in series_by_name.items()
+                if (series_name.lower() in hub_n.lower() or
+                    hub_n.lower() in series_name.lower())
+                if series_screens
+            ]
+            if related:
+                graph[hub_n] = related
+
+    for g in groups:
+        if g["type"] == "case_series":
+            screens = g["screens"]
+            for i, s in enumerate(screens):
+                nxt = screens[i + 1].get("name", "") if i < len(screens) - 1 else "contact"
+                graph[s.get("name", "")] = [nxt]
+
+    return graph
+
+
+def _format_structure_for_prompt(analysis: dict) -> str:
+    """Serialise the Figma structure analysis into a compact string for the HTML prompt.
+
+    Designed to give the model:
+      1. A clear page-flow overview
+      2. Every hub screen with its sub-options
+      3. Every case series with per-slide text extracts
+      4. The navigation graph
+    While staying within ~3 000 chars.
+    """
+    if not analysis:
+        return ""
+
+    groups    = analysis.get("screen_groups", [])
+    nav_graph = analysis.get("nav_graph", {})
+    lines: list = ["━━━ FIGMA CONTENT STRUCTURE ━━━", ""]
+
+    # Overview
+    sm_count  = sum(1 for g in groups if g["type"] == "splash_menu")
+    hub_count = sum(1 for g in groups if g["type"] == "hub")
+    cs_count  = sum(1 for g in groups if g["type"] == "case_series")
+    lines.append(f"OVERVIEW: {sm_count} entry screen(s) · {hub_count} hub(s) · {cs_count} case series")
+    lines.append("")
+
+    # Entry screens
+    for g in groups:
+        if g["type"] != "splash_menu":
+            continue
+        lines.append("ENTRY SCREENS:")
+        for s in g["screens"]:
+            texts = s.get("texts", [])[:6]
+            label = " | ".join(t[:80] for t in texts)
+            lines.append(f'  "{s["name"]}": {label}')
+        lines.append("")
+
+    # Hub screens
+    hub_lines = [g for g in groups if g["type"] == "hub"]
+    if hub_lines:
+        lines.append("HUB SCREENS (category pages — each leads to case studies):")
+        for g in hub_lines:
+            s = g["screens"][0]
+            texts = s.get("texts", [])[:6]
+            label = " | ".join(t[:60] for t in texts)
+            lines.append(f'  "{g["name"]}": {label}')
+        lines.append("")
+
+    # Case series
+    case_lines = [g for g in groups if g["type"] == "case_series"]
+    if case_lines:
+        lines.append("CASE SERIES (3-tab structure: tab 1 = Challenge, tab 2 = Game Plan, tab 3 = Win):")
+        for g in case_lines:
+            lines.append(f'  "{g["name"]}" ({len(g["screens"])} slides):')
+            for s in g["screens"]:
+                texts = s.get("texts", [])[:8]
+                excerpt = " | ".join(t[:70] for t in texts)
+                lines.append(f'    Slide {s.get("_slide_num","?")} "{s["name"]}": {excerpt}')
+        lines.append("")
+
+    # Nav graph (compact)
+    if nav_graph:
+        lines.append("NAVIGATION FLOW:")
+        for src, dsts in list(nav_graph.items())[:20]:
+            lines.append(f'  {src!r:40s} → {", ".join(str(d) for d in dsts[:4])}')
+        lines.append("")
+
+    lines.append(
+        "DATA LAYER REQUIREMENT:\n"
+        "Build const DATA = { ... } containing every case study. Each entry must have:\n"
+        "  { title, parentHub, slides: [{tab, sectionLabel, body, bullets, stats, quote}] }\n"
+        "Populate from the slide texts above — use the real content, not placeholders."
+    )
+
+    return "\n".join(lines)
+
+
+async def _analyze_figma_structure(figma_params: dict) -> dict:
+    """Orchestrate the full pre-HTML Figma analysis.
+
+    1. Fetch frames for the provided node IDs to detect the parent container.
+    2. Re-fetch all direct children of that container (= top-level screens).
+    3. Group screens by naming pattern (splash/hub/case_series).
+    4. Batch-fetch text content (depth=4) for all screens.
+    5. Select representative frame IDs for image export.
+    6. Build navigation graph.
+
+    Returns a structured dict, or {} on any failure (caller degrades gracefully).
+    """
+    file_key     = figma_params.get("file_key")
+    provided_ids = figma_params.get("ids")
+    if not file_key:
+        return {}
+
+    try:
+        # ── Step 1: fetch frames around the provided node(s) ──────────────────
+        log.info("Figma analysis: fetching frames for ids=%s", provided_ids)
+        frames_data = await get_frames(file_key=file_key, ids=provided_ids, depth=2)
+        frames      = frames_data.get("frames", [])
+
+        # ── Step 2: detect parent container ───────────────────────────────────
+        container_id = _find_container_id(frames, provided_ids)
+        log.info("Figma analysis: container_id=%s", container_id)
+
+        # ── Step 3: re-fetch from container when it differs from provided IDs ─
+        if container_id and container_id != (provided_ids or "").split(",")[0].strip():
+            frames_data = await get_frames(file_key=file_key, ids=container_id, depth=2)
+            frames      = frames_data.get("frames", [])
+
+        # ── Step 4: keep only direct children of the container ────────────────
+        top_screens = [f for f in frames if f.get("parentId") == container_id]
+        if not top_screens:
+            top_screens = [f for f in frames if f.get("type") == "FRAME"][:30]
+        log.info("Figma analysis: %d top-level screens", len(top_screens))
+
+        # ── Step 5: group by naming pattern ───────────────────────────────────
+        groups = _group_screens_by_pattern(top_screens)
+
+        # ── Step 6: batch-fetch text content (capped at 25 screens) ──────────
+        screen_ids  = [s["id"] for s in top_screens[:25]]
+        text_content: dict = {}
+        if screen_ids:
+            try:
+                nodes_data = await get_nodes(
+                    file_key=file_key,
+                    ids=",".join(screen_ids),
+                    depth=4,
+                )
+                for nid, wrap in (nodes_data.get("nodes") or {}).items():
+                    doc   = wrap.get("document", wrap)
+                    texts = _extract_all_texts(doc)
+                    if texts:
+                        text_content[nid] = texts
+                log.info("Figma analysis: text content for %d screens", len(text_content))
+            except Exception as exc:
+                log.warning("Figma analysis: text fetch failed — %s", exc)
+
+        for group in groups:
+            for s in group.get("screens", []):
+                s["texts"] = text_content.get(s["id"], [])
+
+        # ── Step 7: representative images + nav graph ─────────────────────────
+        image_ids = _select_representative_frames(groups)
+        nav_graph = _build_nav_graph(groups)
+        log.info("Figma analysis complete — %d image frames: %s", len(image_ids), image_ids)
+
+        return {
+            "screen_groups":  groups,
+            "image_frame_ids": image_ids,
+            "nav_graph":       nav_graph,
+            "container_id":    container_id,
+            "total_screens":   len(top_screens),
+        }
+
+    except Exception as exc:
+        log.warning("Figma structure analysis failed — %s", exc)
+        return {}
+
+
+async def _fetch_figma_images(figma_params: dict, figma_data: dict,
+                               explicit_ids: list = None) -> tuple:
+    """Export Figma frames as PNG for vision input.
+
+    When explicit_ids is provided (from _analyze_figma_structure), those
+    representative frames are used directly.  Otherwise falls back to the
+    legacy tree-walk via _extract_frame_ids.
 
     Returns (b64_images, url_map) where:
       b64_images  — list of base64 PNG strings for Anthropic vision API
-      url_map     — {frame_id: cdn_url} so the prototype can embed <img> tags
+      url_map     — {frame_id: cdn_url}
 
     Returns ([], {}) on any error so callers can degrade gracefully.
     """
     try:
-        frame_ids = _extract_frame_ids(figma_data, max_frames=5)
+        # Prefer analysis-derived IDs; fall back to legacy extractor
+        frame_ids = explicit_ids or _extract_frame_ids(figma_data, max_frames=5)
         if not frame_ids:
             return [], {}
 
@@ -865,151 +1173,140 @@ async def _fetch_figma_images(figma_params: dict, figma_data: dict) -> tuple:
 
 
 def _html_system(plan: dict, has_figma_content: bool = False,
-                 has_figma_images: bool = False) -> str:
+                 has_figma_images: bool = False,
+                 figma_structure: dict = None) -> str:
     """System prompt for the HTML phase.
-    Used together with an assistant-prefill message (see run_chat Phase 4),
-    so the model always continues from inside an already-open <body> — making
-    it structurally impossible to write a <style> block first.
-    When has_figma_content=True, Figma node data is present in the user message.
-    When has_figma_images=True, Figma screenshots are in the user message — the
-    generic layout guide is suppressed entirely; screenshots ARE the layout spec.
+
+    Modes (in descending priority):
+      figma_structure — full structural analysis: navigation graph + all text content.
+                        Unlocks <style> blocks, inline SVG, and data-layer injection.
+      has_figma_images — screenshots present: suppress generic layout guide, derive from images.
+      has_figma_content — raw Figma JSON in user message: extract real labels.
+      none            — fallback: prescriptive layout guide + Tailwind constraints.
     """
     tokens        = plan.get("designTokens", {})
-    pages         = plan.get("pages", [])[:5]   # hard cap — token budget supports max 5 pages
+    pages         = plan.get("pages", [])[:8]   # raised cap — more pages now feasible
     content_types = plan.get("contentTypes", [])
     page_list     = "\n".join(
-        f"  {i}. id=\"p{i}\" — {p['name']}: {p.get('description', '')}"
+        f"  {i}. id=\"{p['name'].lower().replace(' ', '-')}\" — {p['name']}: {p.get('description', '')}"
         for i, p in enumerate(pages)
     )
     ct_list = ", ".join(ct["name"] for ct in content_types)
 
-    # Determine brand colors (from plan tokens, or safe fallbacks)
     brand_hex  = tokens.get("primaryColor",    "#6366f1")
     accent_hex = tokens.get("secondaryColor",  "#8b5cf6")
     bg_hex     = tokens.get("backgroundColor", "#ffffff")
     fg_hex     = tokens.get("textColor",       "#1f2937")
     nav_bg     = bg_hex if bg_hex != "#ffffff" else "#f8f8f8"
 
-    figma_content_note = (
-        "\n⭐ FIGMA TEXT DATA: Real design content is in the user message. "
-        "Extract actual labels, titles, and descriptions from it — do NOT invent placeholder text."
-    ) if has_figma_content else ""
+    has_structure = bool(figma_structure)
 
-    if has_figma_images:
-        # Screenshots present — they ARE the layout specification.
-        # Suppress generic layout guide entirely; Claude must derive layout from images.
-        layout_section = (
-            "━━━ FIGMA SCREENSHOTS ARE THE LAYOUT SPEC ━━━\n"
-            "You have been given actual Figma design screenshots. Your ONLY job is to faithfully\n"
-            "reproduce what you see in those screenshots as HTML/Tailwind. Rules:\n"
-            "\n"
-            "1. LAYOUT — replicate it exactly:\n"
-            "   - Study each screenshot's structure: hero, grid, list, timeline, stat blocks, etc.\n"
-            "   - NEVER default to a generic '2×2 card grid' if the screenshot shows something else.\n"
-            "   - If a page shows a full-width hero with large type + CTA button, build that.\n"
-            "   - If a page shows a numbered timeline or step-by-step story, build that.\n"
-            "   - If a page shows large stat numbers, build those.\n"
-            "   - Each page MUST have the layout shown in its corresponding screenshot.\n"
-            "\n"
-            "2. COLORS — pick exact values from the screenshots:\n"
-            "   - Identify every distinct color visible: nav background, card headers, body bg, text, accents.\n"
-            "   - Use ONLY Tailwind arbitrary-value hex: bg-[#rrggbb], text-[#rrggbb], border-[#rrggbb].\n"
-            "   - NEVER use named Tailwind colors (blue-600, violet-500, gray-800, etc.).\n"
-            "   - Fallback tokens from the design system: brand={brand_hex}, accent={accent_hex},\n"
-            f"     bg={bg_hex}, text={fg_hex} — use these when a color in a screenshot is ambiguous.\n"
-            "\n"
-            "3. TYPOGRAPHY — match weight, size, and spacing:\n"
-            "   - Large display headings → text-4xl font-light or font-bold as shown.\n"
-            "   - Card titles → font-semibold text-lg or text-xl.\n"
-            "   - Body copy → text-sm or text-base text-[#hex]/70.\n"
-            "\n"
-            "4. NAV — match the exact header shown: brand name position, nav link style, background color.\n"
-            "\n"
-            "5. DO NOT embed <img> tags of the screenshots — build the HTML/CSS equivalent."
+    # ── Design section ───────────────────────────────────────────────────────
+    if has_structure or has_figma_images:
+        design_section = (
+            "━━━ FIGMA SCREENSHOTS = THE DESIGN SPEC ━━━\n"
+            "Screenshots of the actual Figma screens are in the user message.\n"
+            "Extract from them:\n"
+            "  1. EXACT colors (background, card fill, accent, text) — express as CSS hex vars.\n"
+            "  2. EXACT layout per screen type (splash, hub card grid, 3-tab case study, etc.).\n"
+            "  3. EXACT typography scale (display, heading, body, label sizes & weights).\n"
+            "  4. Component patterns (card radius, button shape, bottom nav bar, tab underline).\n"
+            "  5. DO NOT embed <img> of the screenshots — reproduce as HTML/CSS."
         )
     else:
-        # No screenshots — use prescriptive layout guide as fallback
-        layout_section = (
-            f"COLORS — use these exact values (do not substitute):\n"
-            f"  Brand/primary: {brand_hex}    Accent/secondary: {accent_hex}\n"
-            f"  Background: {bg_hex}          Text: {fg_hex}\n"
-            f"  Use bg-[{brand_hex}] not bg-primary (Tailwind JIT may not resolve custom tokens).\n"
+        design_section = (
+            f"COLORS — use these exact hex values:\n"
+            f"  Primary: {brand_hex}   Accent: {accent_hex}   BG: {bg_hex}   Text: {fg_hex}\n"
             "\n"
             "LAYOUT GUIDE per page type:\n"
-            "- Home/Landing: Large centred heading + 2×2 grid of large touch-target cards (h-40) with brand-colored tops\n"
-            "- Listing/Challenges: Full-width clickable rows OR 2-col card grid with colored header bands\n"
-            "- Detail/Case study: Vertical story steps (numbered timeline) OR 3-col feature cards\n"
-            "- Results/Metrics: Large bold stat numbers in coloured circles + CTA button\n"
-            "- Directory/All: Filter pills row + 2-col card grid\n"
-            "\n"
-            f"Card template:\n"
-            f'<div class="rounded-2xl overflow-hidden shadow-lg border border-[{fg_hex}]/10">\n'
-            f'  <div class="h-28 bg-[{brand_hex}] flex items-center px-6">\n'
-            f'    <span class="text-3xl mr-3">📄</span>\n'
-            f'    <h3 class="font-semibold text-white text-lg leading-tight">Card Title</h3>\n'
-            f'  </div>\n'
-            f'  <div class="p-5 bg-white text-[{fg_hex}]/70 text-sm">Brief description.</div>\n'
-            f'</div>'
+            "- Home: large centred heading + touch-target card grid\n"
+            "- Listing: full-width rows OR 2-col card grid with coloured header bands\n"
+            "- Detail: numbered timeline story OR 3-col feature cards\n"
+            "- Results: large bold stat numbers + CTA\n"
         )
 
-    return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is pre-written. \
+    # ── CSS rules ────────────────────────────────────────────────────────────
+    if has_structure or has_figma_images:
+        css_rules = (
+            "CSS RULES (Figma mode — full CSS unlocked):\n"
+            "- Write a single <style> block immediately after <body> opens.\n"
+            "  Define CSS custom properties (--color-primary, --color-accent, etc.) and\n"
+            "  all structural rules (.page, .page.active, .kiosk, nav-bar, tab-bar, etc.).\n"
+            "- Use Tailwind arbitrary values (bg-[#hex]) only for one-off utility overrides.\n"
+            "- Inline SVG icons are allowed and preferred over emoji for visual accuracy.\n"
+            "- Keep all transition/hover/active states as CSS, not inline JS."
+        )
+    else:
+        css_rules = (
+            "CSS RULES (no-Figma mode — Tailwind only):\n"
+            "- NO <style> blocks — Tailwind arbitrary values only (bg-[#hex], text-[#hex]).\n"
+            "- NO SVG — use 1–2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 ⭐ 🎯 📈).\n"
+            "- Keep prose concise — 1 sentence descriptions, 5–10 word labels."
+        )
+
+    # ── Data layer instruction ────────────────────────────────────────────────
+    if has_structure:
+        data_instruction = (
+            "DATA LAYER REQUIREMENT (mandatory when Figma structure is provided):\n"
+            "1. Declare const DATA = { ... } at the top of <script>.\n"
+            "2. Populate it with EVERY case study / content item using the REAL text from the\n"
+            "   Figma structure block in the user message — do NOT invent placeholder copy.\n"
+            "3. Each case study entry: { title, parentHub, slides: [{tab, sectionLabel, body,\n"
+            "   bullets:[], stats:[], quote:''}] }\n"
+            "4. Every page rendered at runtime must pull from DATA — never hardcode repeated HTML."
+        )
+    else:
+        data_instruction = (
+            "JS DATA PATTERN — use when cards/list items need individual content:\n"
+            "  const ITEMS = [{id:0, title:'...', body:'...'}];\n"
+            "  function renderDetail(id) { const item = ITEMS[id]; ... showPage('detail'); }"
+        )
+
+    return f"""You are completing an HTML prototype. The <head> with Tailwind CDN is already written.
 Continue from inside the open <body> tag.
-{figma_content_note}
-{layout_section}
 
-INTERACTIVITY RULES — these are mandatory, not optional:
+{design_section}
+
+{css_rules}
+
+{data_instruction}
+
+INTERACTIVITY RULES — mandatory, no exceptions:
 - Every clickable element (card, button, link, row) MUST have a working onclick handler.
-- NEVER leave onclick stubs like "// TODO" or functions that do nothing.
-- Multi-step flows (journeys, wizards, slideshows): implement real step state in JS.
-  Use a currentStep variable; prev/next buttons must actually advance/retreat through steps.
-- If cards lead to a detail view, the detail content must differ per card — use a JS data
-  array and a render function, NOT N copies of hardcoded HTML.
-- All navigation links in the nav must work (showPage or equivalent).
-- Test your logic mentally: clicking every button should produce a visible, meaningful result.
+- NEVER leave onclick stubs ("// TODO" or no-op functions).
+- Multi-step flows: use a currentStep / currentTab state variable with real prev/next logic.
+- Detail views driven by card clicks: use DATA + a render function — never N copies of HTML.
+- All navigation links must work; Back and Home buttons must navigate correctly.
+- Mentally walk every click path — every button must produce a visible, meaningful result.
 
-JS DATA PATTERN — use this when cards or list items need individual content:
-  const ITEMS = [ {{id:0, title:'...', body:'...'}}, ... ];
-  function renderDetail(id) {{
-    const item = ITEMS[id];
-    document.getElementById('detail-title').textContent = item.title;
-    // ... populate other fields
-    showPage('detail');
-  }}
-
-TOKEN BUDGET RULES:
-- NO <style> blocks — Tailwind arbitrary values only (bg-[#hex], text-[#hex])
-- NO SVG — use 1-2 char emoji (🏠 📄 👥 🔍 ✅ 🚀 📊 ⭐ 🎯 📈)
-- Keep prose concise — 1 sentence descriptions, 5-10 word labels
-- MUST complete ALL {len(pages)} pages with working interactions
-
-Project: {plan.get("displayName", "Prototype")}
-Pages ({len(pages)}):
-{page_list}
-Content types: {ct_list}
-
-Write in this order:
-1. <nav class="bg-[{nav_bg}] border-b px-6 py-4 flex items-center justify-between sticky top-0 z-50">
-     Brand name left | navigation buttons right (each calls showPage or a named function)
-   </nav>
-2. One <div id="page-NAME" class="page"> per page — first gets class="page active", rest "page".
-   Use CSS: .page{{display:none}} .page.active{{display:flex;flex-direction:column}}
+PAGE STRUCTURE:
+1. <style> block (Figma mode) OR omit (no-Figma mode).
+2. One <div id="page-NAME" class="page"> per screen — first gets class="page active".
+   In <style>: .page{{display:none}} .page.active{{display:flex;flex-direction:column}}
 3. </body>
 4. <script>
-     // State variables for multi-step flows
+     const DATA = {{ ... }};   // populated with real Figma content
      function showPage(name){{document.querySelectorAll('.page').forEach(e=>e.classList.remove('active'));document.getElementById('page-'+name).classList.add('active');window.scrollTo(0,0);}}
-     // ... all other functions with REAL implementations (no stubs)
-     document.addEventListener('DOMContentLoaded',()=>showPage('{pages[0]["name"].lower().replace(" ","-") if pages else "home"}'));
+     // ... all functions with REAL implementations
    </script>
 5. </html>
 6. </FILE>
 
+Project: {plan.get("displayName", "Prototype")}
+Pages ({len(pages)}): {page_list}
+Content types: {ct_list}
+
 End your output with </FILE>."""
 
 
-def _html_prefill(plan: dict) -> str:
-    """Pre-written assistant content for the HTML phase.
-    Sending this as the last assistant message forces the model to continue
-    from inside <body> — it cannot backtrack and write CSS.
+def _html_prefill(plan: dict, figma_structure: dict = None) -> str:
+    """Pre-written assistant prefill for the HTML phase.
+
+    When figma_structure is provided (Figma mode), the prefill ends just after
+    <body> — giving the model room to open its own <style> block immediately.
+
+    When no structure is present (no-Figma mode), the prefill ends inside the
+    already-open <body> tag so the model cannot backtrack and inject a <style>.
     """
     tokens    = plan.get("designTokens", {})
     primary   = tokens.get("primaryColor",   "#6366f1")
@@ -1019,21 +1316,15 @@ def _html_prefill(plan: dict) -> str:
     font      = tokens.get("fontFamily",      "system-ui, sans-serif")
     title     = plan.get("displayName", "Prototype")
 
-    # Build a valid JS object literal (no f-string brace collision)
     bg_token   = bg or "#111827"
     fg_token   = fg or "#f9fafb"
     first_font = font.split(",")[0].strip().strip("'\"")
 
-    # Google Fonts: load the font if it's a named web font (not a system font)
     _system_fonts = {"system-ui", "ui-sans-serif", "sans-serif", "serif",
                      "monospace", "ui-serif", "ui-monospace", "cursive", "fantasy"}
     is_web_font = first_font.lower() not in _system_fonts
 
-    # Build Tailwind fontFamily — only include the named font if it's a real web font
-    if is_web_font:
-        font_sans = f"['{first_font}','system-ui','sans-serif']"
-    else:
-        font_sans = "['system-ui','sans-serif']"
+    font_sans = f"['{first_font}','system-ui','sans-serif']" if is_web_font else "['system-ui','sans-serif']"
 
     tw_cfg = (
         'tailwind.config={'
@@ -1058,15 +1349,7 @@ def _html_prefill(plan: dict) -> str:
             f':wght@300;400;500;600;700&display=swap" rel="stylesheet">\n'
         )
 
-    # Apply backgroundColor/textColor directly to <body> so the model cannot
-    # accidentally override them. Falls back to Tailwind defaults if not set.
-    body_classes = "min-h-screen font-sans"
-    if bg:
-        body_classes += f" bg-[{bg}]"
-    if fg:
-        body_classes += f" text-[{fg}]"
-
-    return (
+    head = (
         f'<FILE path="prototype.html">\n'
         f'<!DOCTYPE html>\n'
         f'<html lang="en">\n'
@@ -1078,8 +1361,21 @@ def _html_prefill(plan: dict) -> str:
         f'  <script src="https://cdn.tailwindcss.com"></script>\n'
         f'  <script>{tw_cfg}</script>\n'
         f'</head>\n'
-        f'<body class="{body_classes}">'
     )
+
+    if figma_structure:
+        # Figma mode: end prefill at opening <body> tag.
+        # The model will write a <style> block first, then HTML pages, then <script>.
+        return head + '<body>'
+    else:
+        # No-Figma mode: force the model into <body> with classes applied.
+        # It cannot backtrack to write a <style> block before this point.
+        body_classes = "min-h-screen font-sans"
+        if bg:
+            body_classes += f" bg-[{bg}]"
+        if fg:
+            body_classes += f" text-[{fg}]"
+        return head + f'<body class="{body_classes}">'
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -1239,69 +1535,74 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         log.info("Phase 4: HTML prototype (waiting %ds for extended token budget)…", HTML_PHASE_DELAY)
         await asyncio.sleep(HTML_PHASE_DELAY)
 
-        # Fetch Figma node content (text labels) + frame images (visual style + embed).
         figma_content    = ""
-        figma_images     = []   # base64 PNG strings for Anthropic vision
-        figma_image_urls = {}   # {frame_id: cdn_url} for <img> embedding
-        figma_raw_data   = {}
+        figma_images     = []
+        figma_image_urls = {}
+        figma_analysis   = {}   # result of _analyze_figma_structure
 
         if mode in ("figma", "both") and figma_params:
-            try:
-                log.info("Phase 4: Fetching Figma node content for HTML guidance…")
-                figma_raw_data = await get_nodes(
-                    file_key=figma_params.get("file_key"),
-                    ids=figma_params.get("ids"),
-                    depth=figma_params.get("depth", 2),
-                )
-                figma_content = truncate(figma_raw_data)
-                log.info("Phase 4: Figma content fetched (%d chars)", len(figma_content))
-            except Exception as exc:
-                log.warning("Phase 4: Figma node fetch failed — %s", exc)
 
+            # ── Phase 4a: structural analysis (replaces ad-hoc node fetch) ───
+            log.info("Phase 4a: Figma structural analysis…")
             try:
-                log.info("Phase 4: Exporting Figma frame images for style matching + embedding…")
+                figma_analysis = await _analyze_figma_structure(figma_params)
+                log.info(
+                    "Phase 4a: analysis complete — %d screen groups, %d image frames, "
+                    "%d total screens",
+                    len(figma_analysis.get("screen_groups", [])),
+                    len(figma_analysis.get("image_frame_ids", [])),
+                    figma_analysis.get("total_screens", 0),
+                )
+            except Exception as exc:
+                log.warning("Phase 4a: structural analysis failed — %s", exc)
+
+            # ── Phase 4b: export representative frame images ─────────────────
+            try:
+                log.info("Phase 4b: Exporting representative Figma frame images…")
+                explicit_ids = figma_analysis.get("image_frame_ids") or None
                 figma_images, figma_image_urls = await _fetch_figma_images(
-                    figma_params, figma_raw_data
+                    figma_params, {}, explicit_ids=explicit_ids
                 )
                 log.info(
-                    "Phase 4: %d Figma frame image(s) downloaded, %d URL(s) for embedding",
-                    len(figma_images), len(figma_image_urls),
+                    "Phase 4b: %d frame image(s) exported",
+                    len(figma_images),
                 )
             except Exception as exc:
-                log.warning("Phase 4: Figma image export failed — %s", exc)
+                log.warning("Phase 4b: Figma image export failed — %s", exc)
 
-        # Prefill: pre-write the <head> with Tailwind CDN so the model is forced
-        # to continue from inside <body> — it cannot write a <style> block first.
-        prefill = _html_prefill(plan)
-
-        # Build the user message as a multimodal content list when images exist,
-        # or a plain string otherwise.
+        # ── Build user message ────────────────────────────────────────────────
         display_name = plan.get("displayName", "prototype")
-        base_text = f"Generate HTML prototype for: {display_name}"
+        base_text    = f"Generate HTML prototype for: {display_name}"
 
-        if figma_content:
+        # Inject the structured content analysis when available
+        if figma_analysis:
+            structure_str = _format_structure_for_prompt(figma_analysis)
+            if structure_str:
+                base_text += "\n\n" + structure_str
+        elif figma_content:
+            # Legacy fallback: raw Figma JSON snippet
             base_text += (
                 "\n\nFigma design content (extract real text labels, titles, descriptions):\n"
                 + figma_content
             )
 
         if figma_images:
-            # Multimodal: images first so the model can reference them, text last
-            user_content: list = []
-            user_content.append({
-                "type": "text",
-                "text": (
-                    "The following screenshots are the actual Figma design frames for this project. "
-                    "Your primary job is to REPLICATE these layouts in HTML/Tailwind — not to invent "
-                    "generic layouts. For each screenshot:\n"
-                    "• Identify the exact layout pattern (hero, grid, timeline, stat blocks, list, etc.)\n"
-                    "• Extract the exact colors visible (nav background, card fill, body bg, text, accents)\n"
-                    "• Note the typography scale (display, heading, body sizes)\n"
-                    "• Note component patterns (card shape, button style, icon treatment)\n"
-                    "Each page in the HTML must visually match its corresponding screenshot. "
-                    "Do NOT default to a generic card grid if the screenshot shows something different."
-                ),
-            })
+            # Multimodal: screenshots first (visual spec), then text content
+            user_content: list = [
+                {
+                    "type": "text",
+                    "text": (
+                        "The following screenshots are the EXACT Figma screens for this project.\n"
+                        "For each screenshot, extract:\n"
+                        "  • Exact background color, card fill, accent color, text color\n"
+                        "  • Exact layout (kiosk frame, bottom nav bar, tab underlines, card grid)\n"
+                        "  • Typography scale (display size, heading weight, body size)\n"
+                        "  • Component patterns (pill buttons, card radius, icon style)\n"
+                        "Reproduce these faithfully in your <style> block and HTML. "
+                        "Do NOT embed these screenshots as <img> tags — recreate them in code."
+                    ),
+                }
+            ]
             for b64 in figma_images:
                 user_content.append({
                     "type": "image",
@@ -1311,6 +1612,9 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         else:
             user_content = base_text
 
+        # ── Prefill + call ────────────────────────────────────────────────────
+        prefill = _html_prefill(plan, figma_structure=figma_analysis or None)
+
         html_messages = [
             {"role": "user",      "content": user_content},
             {"role": "assistant", "content": prefill},
@@ -1319,15 +1623,15 @@ async def run_chat(messages, framework: str, output_type: str, mode: str,
         html_continuation, html_stop = await _call(
             system=_html_system(
                 plan,
-                has_figma_content=bool(figma_content),
+                has_figma_content=bool(figma_content or figma_analysis),
                 has_figma_images=bool(figma_images),
+                figma_structure=figma_analysis or None,
             ),
             messages=html_messages,
             max_tokens=HTML_MAX_TOKENS,
         )
 
-        # The full file = prefill + model continuation; parse together
-        full_html = prefill + html_continuation
+        full_html  = prefill + html_continuation
         html_files = _parse_files(full_html)
         all_files.extend(html_files)
         log.info(
